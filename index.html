@@ -16,44 +16,51 @@
         let db, auth, userId;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'cutting-calc-app';
         let lastSavedHash = ""; 
+        
+        const useLocalState = typeof __firebase_config === 'undefined';
 
-        // Initialize Firebase
         const initFirebase = async () => {
-            const firebaseConfig = JSON.parse(__firebase_config);
-            const app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
+            if (useLocalState) return;
 
-            // RULE 3: Auth Before Queries
-            const initAuth = async () => {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            };
+            try {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
 
-            await initAuth();
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
 
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    userId = user.uid;
-                    loadHistory(); // ユーザー確定後に履歴読み込みを開始
-                }
-            });
+                await initAuth();
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        loadHistory();
+                    }
+                });
+            } catch (e) {
+                console.error("Firebase初期化エラー:", e);
+            }
         };
 
         const loadHistory = () => {
-            if (!userId) return;
-            // RULE 1: Strict Paths
+            if (useLocalState || !userId) return;
             const historyCol = collection(db, 'artifacts', appId, 'users', userId, 'history');
             
-            // iPhone/Safariの不具合対策としてリスナーを確実にセット
             onSnapshot(historyCol, async (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                window.historyData = data.sort((a, b) => b.createdAt - a.createdAt);
+                // チェック済みを優先し、その中で作成日時順に並び替え
+                window.historyData = data.sort((a, b) => {
+                    if (a.checked !== b.checked) return a.checked ? -1 : 1;
+                    return b.createdAt - a.createdAt;
+                });
                 
-                // 自動削除ロジック: チェックなし項目を3件までに制限
                 const uncheckedItems = window.historyData.filter(item => !item.checked);
                 if (uncheckedItems.length > 3) {
                     const toDelete = uncheckedItems.slice(3); 
@@ -63,7 +70,6 @@
                     });
                     await batch.commit();
                 }
-
                 window.renderHistory();
             }, (error) => {
                 console.error("Firestore Loading Error:", error);
@@ -71,30 +77,73 @@
         };
 
         window.saveToCloud = async (item) => {
-            if (!userId || !item) return;
+            if (!item) return;
             const hash = JSON.stringify(item.inputs) + item.mode + item.no + (item.calcDir || '');
-            if (hash === lastSavedHash) return;
+            if (hash === lastSavedHash) return; 
             lastSavedHash = hash;
 
+            const newItem = { ...item, checked: false, createdAt: Date.now() };
+
+            if (useLocalState) {
+                newItem.id = Date.now().toString();
+                window.historyData.unshift(newItem);
+                window.historyData.sort((a, b) => {
+                    if (a.checked !== b.checked) return a.checked ? -1 : 1;
+                    return b.createdAt - a.createdAt;
+                });
+                const uncheckedItems = window.historyData.filter(d => !d.checked);
+                if (uncheckedItems.length > 3) {
+                    const idsToDelete = uncheckedItems.slice(3).map(d => d.id);
+                    window.historyData = window.historyData.filter(d => !idsToDelete.includes(d.id));
+                }
+                window.renderHistory();
+                return;
+            }
+
+            if (!userId) return;
             const historyCol = collection(db, 'artifacts', appId, 'users', userId, 'history');
-            await addDoc(historyCol, {
-                ...item,
-                checked: false, 
-                createdAt: Date.now()
-            });
+            await addDoc(historyCol, newItem);
         };
 
         window.toggleCheck = async (id, currentStatus) => {
+            if (useLocalState) {
+                const item = window.historyData.find(d => d.id === id);
+                if (item) item.checked = !currentStatus;
+                window.historyData.sort((a, b) => {
+                    if (a.checked !== b.checked) return a.checked ? -1 : 1;
+                    return b.createdAt - a.createdAt;
+                });
+                window.renderHistory();
+                return;
+            }
             if (!userId) return;
             const docRef = doc(db, 'artifacts', appId, 'users', userId, 'history', id);
-            await updateDoc(docRef, {
-                checked: !currentStatus
-            });
+            await updateDoc(docRef, { checked: !currentStatus });
+        };
+
+        window.openConfirm = (action, mode = '') => {
+            const modal = document.getElementById('customConfirmModal');
+            const msg = document.getElementById('confirmMessage');
+            window.pendingAction = { action, mode };
+            msg.innerText = action === 'category' ? `${mode}切込の履歴を削除しますか？` : "全ての履歴を一括削除しますか？";
+            modal.classList.remove('hidden');
         };
 
         window.executeConfirm = async () => {
-            if (!window.pendingAction || !userId) return;
+            if (!window.pendingAction) return;
             const { action, mode } = window.pendingAction;
+            if (useLocalState) {
+                window.historyData = window.historyData.filter(d => {
+                    if (d.checked) return true;
+                    if (action === 'all') return false;
+                    if (action === 'category' && d.mode === mode) return false;
+                    return true;
+                });
+                document.getElementById('customConfirmModal').classList.add('hidden');
+                window.renderHistory();
+                return;
+            }
+            if (!userId) return;
             let itemsToDelete = window.historyData.filter(d => !d.checked && (action === 'all' || d.mode === mode));
             if (itemsToDelete.length > 0) {
                 const batch = writeBatch(db);
@@ -108,11 +157,26 @@
     </script>
 
     <style>
+        :root {
+            /* デフォルトテーマ（横: オレンジ） */
+            --theme-color: #ff9f0a;
+            --theme-btn-start: #ffb340;
+            --theme-btn-end: #ff9f0a;
+            --theme-btn-shadow: #cc7f08;
+        }
+
+        /* 縦テーマ（濃いオレンジ） */
+        .app-container.mode-height {
+            --theme-color: #e67600;
+            --theme-btn-start: #ff8c00;
+            --theme-btn-end: #e67600;
+            --theme-btn-shadow: #994f00;
+        }
+
         body { background-color: #000000; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; overflow-x: hidden; touch-action: pan-y; }
-        .app-container { max-width: 600px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+        .app-container { max-width: 600px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; transition: background-color 0.3s ease; }
         .input-card { background: #1c1c1e; border-radius: 14px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); }
         
-        /* 3Dタブボタン */
         .tab-bar { background-color: #111; padding: 4px; border-radius: 12px; box-shadow: inset 0 2px 8px rgba(0,0,0,0.5); }
         .tab-button { 
             padding-top: 0.6rem; 
@@ -122,33 +186,53 @@
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             border-radius: 8px;
             background: linear-gradient(180deg, #2c2c2e 0%, #1c1c1e 100%);
-            border: 1px solid #3a3a3c;
-            box-shadow: 0 1px 0 rgba(255,255,255,0.05);
+            border: 2px solid transparent;
             margin: 0 2px;
         }
         .tab-active { 
             background: linear-gradient(180deg, #48484a 0%, #2c2c2e 100%) !important; 
-            color: #ff9f0a !important; 
-            border-color: #ff9f0a;
-            box-shadow: 0 4px 10px rgba(255, 159, 10, 0.2), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+            color: var(--theme-color) !important; 
+            border: 2px solid var(--theme-color) !important;
             font-weight: 900;
             transform: translateY(-1px);
         }
 
         input { background-color: #2c2c2e !important; color: #ffffff !important; border: 1px solid #3a3a3c !important; }
-        .input-highlight-border { border: 2px solid #ff9f0a !important; }
+        .input-highlight-border { border: 2px solid var(--theme-color) !important; transition: border-color 0.3s ease; }
         input::placeholder { font-size: 16px; color: #636366; }
 
-        .btn-gray-3d { background: linear-gradient(180deg, #aeaeb2 0%, #8e8e93 100%); color: #ffffff; border: 1px solid #aeaeb2; box-shadow: 0 3px 0 #3a3a3c; position: relative; top: 0; }
-        .btn-silver-3d { background: linear-gradient(180deg, #f2f2f7 0%, #d1d1d6 100%); color: #1c1c1e; border: 1px solid #ffffff; box-shadow: 0 3px 0 #48484a; position: relative; top: 0; }
-
-        .history-item { animation: slideIn 0.3s ease-out; background: #1c1c1e; border: 1px solid #2c2c2e; }
-        .history-item.checked { border-color: #ff9f0a; }
+        .history-item { 
+            animation: slideIn 0.3s ease-out; 
+            background: #1c1c1e; 
+            border: 1px solid #2c2c2e; 
+            cursor: pointer;
+            transition: all 0.1s ease;
+        }
+        .history-item:active { transform: scale(0.98); background: #2c2c2e; }
+        .history-item.checked { border-color: var(--theme-color); }
         .text-silver { color: #d1d1d6 !important; }
 
         .dir-switch-bar { background-color: #1c1c1e; padding: 2px; border-radius: 8px; }
-        .dir-button { font-size: 13px !important; color: #aeaeb2; padding: 6px 12px; }
-        .dir-active { background-color: #3a3a3c !important; color: #ffffff !important; border-radius: 6px; }
+        .dir-button { font-size: 13px !important; color: #aeaeb2; padding: 6px 12px; transition: all 0.2s; border: 2px solid transparent; }
+        .dir-active { 
+            background-color: #3a3a3c !important; 
+            color: var(--theme-color) !important; 
+            border: 2px solid var(--theme-color) !important; 
+            border-radius: 6px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3); 
+        }
+
+        .save-btn-3d {
+            background: linear-gradient(180deg, var(--theme-btn-start) 0%, var(--theme-btn-end) 100%);
+            border: 1px solid var(--theme-btn-start);
+            border-bottom: 4px solid var(--theme-btn-shadow);
+            transition: all 0.1s ease;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+        .save-btn-3d:active { border-bottom-width: 0px; transform: translateY(4px); }
+
+        .btn-gray-3d { background: linear-gradient(180deg, #aeaeb2 0%, #8e8e93 100%); color: #ffffff; border: 1px solid #aeaeb2; box-shadow: 0 3px 0 #3a3a3c; }
+        .btn-silver-3d { background: linear-gradient(180deg, #f2f2f7 0%, #d1d1d6 100%); color: #1c1c1e; border: 1px solid #ffffff; box-shadow: 0 3px 0 #48484a; }
 
         @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
@@ -158,108 +242,122 @@
 <div class="app-container p-4" id="mainApp">
     <header class="text-center py-4">
         <h1 class="text-[32px] font-bold text-white tracking-tight">切込寸法 計算</h1>
-        <p class="text-[15px] font-medium text-silver mt-0 uppercase tracking-widest">KYOWA ROOF</p>
+        <p class="text-[15px] font-medium text-[#d1d1d6] mt-0 uppercase tracking-widest">KYOWA ROOF</p>
     </header>
 
     <div class="flex mb-6 tab-bar">
-        <button onclick="switchTab('side')" id="tabSide" class="tab-button flex-1 font-bold rounded-[8px] tab-active">横 切込</button>
-        <button onclick="switchTab('height')" id="tabHeight" class="tab-button flex-1 font-bold rounded-[8px]">縦 切込</button>
+        <button type="button" onclick="switchTab('side')" id="tabSide" class="tab-button flex-1 font-bold rounded-[8px] tab-active">横 切込</button>
+        <button type="button" onclick="switchTab('height')" id="tabHeight" class="tab-button flex-1 font-bold rounded-[8px]">縦 切込</button>
     </div>
 
-    <div id="swipeTarget">
+    <!-- スワイプ対象エリア -->
+    <div id="swipeArea">
+        <!-- 入力：横 -->
         <div id="sideContent">
             <div class="input-card p-4 mb-4">
                 <div class="grid grid-cols-2 gap-4 mb-3">
                     <div>
-                        <label class="block text-[14px] font-semibold text-silver mb-1 ml-1">働き幅</label>
-                        <input type="text" inputmode="numeric" id="side_a" placeholder="働き幅" oninput="formatInput(this); calculateSide();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">働き幅 (＠)</label>
+                        <input type="text" inputmode="numeric" id="side_a" placeholder="働き幅" oninput="formatInput(this); calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                     <div>
-                        <label class="block text-[14px] font-semibold text-silver mb-1 ml-1">対象横幅</label>
-                        <input type="text" inputmode="numeric" id="side_l2" placeholder="対象横幅" oninput="formatInput(this); calculateSide();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">横幅 (開口部)</label>
+                        <input type="text" inputmode="numeric" id="side_l2" placeholder="横幅" oninput="formatInput(this); calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                 </div>
                 <div class="flex gap-4">
-                    <div class="flex-1">
-                        <label class="block text-[14px] font-semibold text-silver mb-1 ml-1">寸法(張方向↔︎対象)</label>
-                        <input type="text" inputmode="numeric" id="side_l1" placeholder="寸法を入力" oninput="formatInput(this); calculateSide();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
-                    </div>
                     <div class="w-24">
-                        <label class="block text-[14px] font-semibold text-silver mb-1 text-center">No.</label>
-                        <input type="text" inputmode="numeric" id="side_no" maxlength="2" placeholder="No" oninput="calculateSide();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 text-center">No.</label>
+                        <input type="text" inputmode="numeric" id="side_no" maxlength="2" placeholder="No" oninput="calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                    </div>
+                    <div class="flex-1">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">寸法 (張方向↔︎対象)</label>
+                        <input type="text" inputmode="numeric" id="side_l1" placeholder="寸法" oninput="formatInput(this); calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
                     </div>
                 </div>
             </div>
         </div>
 
+        <!-- 入力：縦 -->
         <div id="heightContent" class="hidden">
             <div class="input-card p-4 mb-4">
                 <div class="grid grid-cols-2 gap-4 mb-3">
                     <div>
-                        <label class="block text-[14px] font-semibold text-silver mb-1 ml-1">全長</label>
-                        <input type="text" inputmode="numeric" id="h_total" placeholder="全長" oninput="formatInput(this); calculateHeight();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">全長 (L)</label>
+                        <input type="text" inputmode="numeric" id="h_total" placeholder="全長" oninput="formatInput(this); calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                     <div>
-                        <label class="block text-[14px] font-semibold text-silver mb-1 ml-1">対象縦幅</label>
-                        <input type="text" inputmode="numeric" id="h_l2" placeholder="対象縦幅" oninput="formatInput(this); calculateHeight();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">縦幅 (開口部)</label>
+                        <input type="text" inputmode="numeric" id="h_l2" placeholder="縦幅" oninput="formatInput(this); calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                 </div>
                 <div class="flex gap-4">
-                    <div class="flex-1">
-                        <label class="block text-[14px] font-semibold text-silver mb-1 ml-1">寸法(下↑対象)</label>
-                        <input type="text" inputmode="numeric" id="h_l1" placeholder="寸法を入力" oninput="formatInput(this); calculateHeight();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
-                    </div>
                     <div class="w-24">
-                        <label class="block text-[14px] font-semibold text-silver mb-1 text-center">No.</label>
-                        <input type="text" inputmode="numeric" id="h_no" maxlength="2" placeholder="No" oninput="calculateHeight();" onblur="saveImmediately()" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 text-center">No.</label>
+                        <input type="text" inputmode="numeric" id="h_no" maxlength="2" placeholder="No" oninput="calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                    </div>
+                    <div class="flex-1">
+                        <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">寸法 (下↑対象)</label>
+                        <input type="text" inputmode="numeric" id="h_l1" placeholder="寸法" oninput="formatInput(this); calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- 履歴保存ボタン -->
+    <div id="saveBtnContainer" class="px-1 mb-6">
+        <button type="button" id="saveBtn" onclick="saveImmediately()" class="save-btn-3d w-full py-4 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 text-lg active:scale-95 transition-transform">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>
+            <span id="saveBtnText">履歴に保存</span>
+        </button>
+    </div>
+
+    <!-- 結果・図面表示エリア -->
     <div id="resultArea" class="hidden space-y-3 mb-10">
         <div id="directionToggle" class="flex justify-center mb-1">
             <div class="dir-switch-bar flex gap-1">
-                <!-- タブのテキストを入れ替え -->
-                <button onclick="setCalcDir('LtoR')" id="btnLtoR" class="dir-button font-bold dir-active">左←右</button>
-                <button onclick="setCalcDir('RtoL')" id="btnRtoL" class="dir-button font-bold">左→右</button>
+                <button type="button" onclick="setCalcDir('LtoR')" id="btnLtoR" class="dir-button font-bold dir-active">左←右</button>
+                <button type="button" onclick="setCalcDir('RtoL')" id="btnRtoL" class="dir-button font-bold">左→右</button>
             </div>
         </div>
+
         <div class="bg-[#111] rounded-2xl border border-[#333] shadow-xl overflow-hidden p-1">
             <div id="svgContainer" class="w-full bg-[#000] rounded-xl overflow-hidden"></div>
         </div>
         <div id="numericResults" class="grid gap-3"></div>
     </div>
 
+    <!-- 履歴エリア -->
     <div id="historyArea" class="mt-4 border-t border-[#2c2c2e] pt-6 pb-24">
         <div class="flex items-center justify-between mb-8 px-1">
             <h2 class="text-[22px] font-bold text-white tracking-tight">計算履歴</h2>
-            <button onclick="openConfirm('all')" class="btn-gray-3d text-[11px] font-black px-4 py-1.5 rounded-full uppercase shadow-sm">一括削除</button>
+            <button type="button" onclick="openConfirm('all')" class="btn-gray-3d text-[11px] font-black px-4 py-1.5 rounded-full uppercase shadow-sm">一括削除</button>
         </div>
         <div class="mb-12">
             <div class="flex justify-between items-center mb-5 px-1">
-                <h3 class="text-silver text-[18px] font-bold uppercase tracking-widest">横切込の履歴</h3>
-                <button onclick="openConfirm('category', '横')" class="btn-silver-3d text-[10px] font-black px-4 py-1.5 rounded-full shadow-sm">削除</button>
+                <h3 class="text-[#d1d1d6] text-[18px] font-bold uppercase tracking-widest">横切込の履歴</h3>
+                <button type="button" onclick="openConfirm('category', '横')" class="btn-silver-3d text-[10px] font-black px-4 py-1.5 rounded-full shadow-sm">削除</button>
             </div>
-            <div id="sideHistoryList" class="space-y-3"></div>
+            <div id="sideHistoryList" class="space-y-4"></div>
         </div>
         <div>
             <div class="flex justify-between items-center mb-5 px-1">
-                <h3 class="text-silver text-[18px] font-bold uppercase tracking-widest">縦切込の履歴</h3>
-                <button onclick="openConfirm('category', '縦')" class="btn-silver-3d text-[10px] font-black px-4 py-1.5 rounded-full shadow-sm">削除</button>
+                <h3 class="text-[#d1d1d6] text-[18px] font-bold uppercase tracking-widest">縦切込の履歴</h3>
+                <button type="button" onclick="openConfirm('category', '縦')" class="btn-silver-3d text-[10px] font-black px-4 py-1.5 rounded-full shadow-sm">削除</button>
             </div>
-            <div id="heightHistoryList" class="space-y-3"></div>
+            <div id="heightHistoryList" class="space-y-4"></div>
         </div>
     </div>
 
+    <!-- モーダル -->
     <div id="customConfirmModal" class="hidden fixed inset-0 flex items-center justify-center p-6 shadow-2xl" style="background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 9999;">
-        <div class="bg-[#1c1c1e] w-full max-w-sm rounded-3xl p-6 border border-[#3a3a3c] text-center">
+        <div class="bg-[#1c1c1e] w-full max-w-sm rounded-3xl p-6 border border-[#3a3a3c] text-center shadow-2xl">
             <h4 class="text-[18px] font-bold text-white mb-3">確認</h4>
-            <p id="confirmMessage" class="text-silver text-[14px] mb-6 leading-relaxed"></p>
+            <p id="confirmMessage" class="text-[#d1d1d6] text-[14px] mb-6 leading-relaxed"></p>
             <div class="flex gap-3">
-                <button onclick="document.getElementById('customConfirmModal').classList.add('hidden')" class="flex-1 bg-[#2c2c2e] text-white font-bold py-3 rounded-xl active:opacity-70">キャンセル</button>
-                <button onclick="executeConfirm()" class="flex-1 bg-[#ff453a] text-white font-bold py-3 rounded-xl active:opacity-70">削除する</button>
+                <button type="button" onclick="document.getElementById('customConfirmModal').classList.add('hidden')" class="flex-1 bg-[#2c2c2e] text-white font-bold py-3 rounded-xl active:opacity-70 transition-opacity">キャンセル</button>
+                <button type="button" onclick="executeConfirm()" class="flex-1 bg-[#ff453a] text-white font-bold py-3 rounded-xl active:opacity-70 transition-opacity">削除する</button>
             </div>
         </div>
     </div>
@@ -270,6 +368,15 @@
 
     function switchTab(mode) {
         currentMode = mode;
+        const container = document.getElementById('mainApp');
+        
+        // モードに合わせてテーマクラスを切り替え
+        if (mode === 'height') {
+            container.classList.add('mode-height');
+        } else {
+            container.classList.remove('mode-height');
+        }
+
         document.getElementById('sideContent').classList.toggle('hidden', mode !== 'side');
         document.getElementById('heightContent').classList.toggle('hidden', mode !== 'height');
         document.getElementById('tabSide').classList.toggle('tab-active', mode === 'side');
@@ -277,6 +384,17 @@
         if (mode === 'side') calculateSide(); else calculateHeight();
         document.getElementById('directionToggle').classList.toggle('hidden', mode !== 'side');
     }
+
+    let startX = 0;
+    const swipeArea = document.getElementById('swipeArea');
+    swipeArea.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, {passive: true});
+    swipeArea.addEventListener('touchend', (e) => {
+        const endX = e.changedTouches[0].clientX;
+        const diffX = endX - startX;
+        const threshold = 60;
+        if (diffX > threshold) { if (currentMode !== 'side') switchTab('side'); }
+        else if (diffX < -threshold) { if (currentMode !== 'height') switchTab('height'); }
+    });
 
     function setCalcDir(dir) {
         calcDirection = dir;
@@ -295,7 +413,44 @@
         el.dataset.oldValue = el.value;
     };
 
-    window.saveImmediately = function() { if (currentResult) window.saveToCloud({...currentResult}); };
+    window.saveImmediately = function() { 
+        if (currentResult) {
+            window.saveToCloud({...currentResult}); 
+            const btnText = document.getElementById('saveBtnText');
+            btnText.innerText = "保存しました ✓";
+            setTimeout(() => { btnText.innerText = "履歴に保存"; }, 1500);
+        } else {
+            const btnText = document.getElementById('saveBtnText');
+            const originalText = btnText.innerText;
+            btnText.innerText = "先に数値を入力してください";
+            setTimeout(() => { btnText.innerText = "履歴に保存"; }, 1500);
+        }
+    };
+
+    window.applyHistoryItem = function(id) {
+        const item = window.historyData.find(d => d.id === id);
+        if (!item) return;
+        if (item.mode === '横') {
+            switchTab('side');
+            if (item.calcDir) setCalcDir(item.calcDir);
+            document.getElementById('side_a').value = formatNumber(item.inputs.a);
+            document.getElementById('side_l2').value = formatNumber(item.inputs.l2);
+            document.getElementById('side_l1').value = formatNumber(item.inputs.l1);
+            document.getElementById('side_no').value = item.no;
+            calculateSide();
+        } else {
+            switchTab('height');
+            document.getElementById('h_total').value = formatNumber(item.inputs.total);
+            document.getElementById('h_l2').value = formatNumber(item.inputs.l2);
+            document.getElementById('h_l1').value = formatNumber(item.inputs.l1);
+            document.getElementById('h_no').value = item.no;
+            calculateHeight();
+        }
+        setTimeout(() => {
+            const el = document.getElementById('resultArea');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+    };
 
     window.calculateSide = function() {
         const aVal = unformatNumber(document.getElementById('side_a').value);
@@ -303,82 +458,70 @@
         const l1Val = unformatNumber(document.getElementById('side_l1').value);
         const noVal = document.getElementById('side_no').value;
         const a = parseFloat(aVal), l2 = parseFloat(l2Val), l1 = parseFloat(l1Val);
-        const resultArea = document.getElementById('resultArea');
-        if (isNaN(l1) || isNaN(l2) || isNaN(a) || a <= 0) { resultArea.classList.add('hidden'); currentResult = null; return; }
-
+        const resArea = document.getElementById('resultArea');
+        if (isNaN(l1) || isNaN(l2) || isNaN(a) || a <= 0) { resArea.classList.add('hidden'); currentResult = null; return; }
         let z, y;
-        if (calcDirection === 'LtoR') {
-            y = l1 % a;
-            z = (a - ((l1 + l2) % a)) % a;
-        } else {
-            z = l1 % a;
-            y = (a - ((l1 + l2) % a)) % a;
-        }
-
-        const round = n => Math.round(n * 10) / 10;
-        const fZ = round(z), fY = round(y);
+        if (calcDirection === 'LtoR') { y = l1 % a; z = (a - ((l1 + l2) % a)) % a; } else { z = l1 % a; y = (a - ((l1 + l2) % a)) % a; }
+        const fZ = Math.round(z * 10) / 10, fY = Math.round(y * 10) / 10;
         currentResult = { mode: '横', no: noVal || '-', inputs: { a, l2, l1 }, outputs: { z: fZ, y: fY }, calcDir: calcDirection };
-
+        
         document.getElementById('numericResults').className = "grid grid-cols-2 gap-3";
         document.getElementById('numericResults').innerHTML = `
-            <div class="bg-[#1c1c1e] rounded-2xl py-3 px-4 border border-[#2c2c2e] text-center shadow-lg">
+            <div class="bg-[#1c1c1e] rounded-2xl py-2 px-4 border border-[#2c2c2e] text-center shadow-lg">
                 <p class="text-[13px] font-bold text-[#d1d1d6] mb-1">左側切込</p>
-                <p class="text-[40px] font-bold text-[#0a84ff] leading-none">${formatNumber(fZ)}<span class="text-sm ml-1 text-silver">mm</span></p>
+                <p class="text-[38px] font-bold text-[#0a84ff] leading-none">${formatNumber(fZ)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p>
             </div>
-            <div class="bg-[#1c1c1e] rounded-2xl py-3 px-4 border border-[#2c2c2e] text-center shadow-lg">
+            <div class="bg-[#1c1c1e] rounded-2xl py-2 px-4 border border-[#2c2c2e] text-center shadow-lg">
                 <p class="text-[13px] font-bold text-[#d1d1d6] mb-1">右側切込</p>
-                <p class="text-[40px] font-bold text-[#30d158] leading-none">${formatNumber(fY)}<span class="text-sm ml-1 text-silver">mm</span></p>
+                <p class="text-[38px] font-bold text-[#30d158] leading-none">${formatNumber(fY)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p>
             </div>
         `;
         updateSideSVG(l1, l2, a, fZ, fY);
-        resultArea.classList.remove('hidden');
+        resArea.classList.remove('hidden');
     };
 
     window.calculateHeight = function() {
         const tVal = unformatNumber(document.getElementById('h_total').value), l2Val = unformatNumber(document.getElementById('h_l2').value), l1Val = unformatNumber(document.getElementById('h_l1').value), noVal = document.getElementById('h_no').value;
         const t = parseFloat(tVal), l2 = parseFloat(l2Val), l1 = parseFloat(l1Val);
-        const resultArea = document.getElementById('resultArea');
-        if (isNaN(t) || isNaN(l1) || isNaN(l2) || t <= 0) { resultArea.classList.add('hidden'); currentResult = null; return; }
-        const rDown = l1, rUp = l1 + l2, rTop = t - rUp;
-        currentResult = { mode: '縦', no: noVal || '-', inputs: { total: t, l2, l1 }, outputs: { down: rDown, up: rUp, top: rTop } };
+        const resArea = document.getElementById('resultArea');
+        if (isNaN(t) || isNaN(l1) || isNaN(l2) || t <= 0) { resArea.classList.add('hidden'); currentResult = null; return; }
+        const rD = l1, rU = l1 + l2, rT = t - rU;
+        currentResult = { mode: '縦', no: noVal || '-', inputs: { total: t, l2, l1 }, outputs: { down: rD, up: rU, top: rT } };
+        
         document.getElementById('numericResults').className = "grid grid-cols-1 sm:grid-cols-3 gap-3";
         document.getElementById('numericResults').innerHTML = `
-            <div class="bg-[#1c1c1e] rounded-2xl py-3 border border-[#2c2c2e] text-center shadow-lg">
+            <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg">
                 <p class="text-[13px] font-bold text-[#d1d1d6] mb-1">下 切込</p>
-                <p class="text-[40px] font-bold text-white leading-none">${formatNumber(rDown)}<span class="text-sm ml-1 text-silver">mm</span></p>
+                <p class="text-[38px] font-bold text-white leading-none">${formatNumber(rD)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p>
             </div>
-            <div class="bg-[#1c1c1e] rounded-2xl py-3 border border-[#2c2c2e] text-center shadow-lg">
+            <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg">
                 <p class="text-[13px] font-bold text-[#d1d1d6] mb-1">上 切込</p>
-                <p class="text-[40px] font-bold text-[#5e5ce6] leading-none">${formatNumber(rUp)}<span class="text-sm ml-1 text-silver">mm</span></p>
+                <p class="text-[38px] font-bold text-[#5e5ce6] leading-none">${formatNumber(rU)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p>
             </div>
-            <div class="bg-[#1c1c1e] rounded-2xl py-3 border border-[#2c2c2e] text-center shadow-lg">
+            <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg">
                 <p class="text-[13px] font-bold text-[#d1d1d6] mb-1">上寸法</p>
-                <p class="text-[40px] font-bold text-[#30d158] leading-none">${formatNumber(rTop)}<span class="text-sm ml-1 text-silver">mm</span></p>
+                <p class="text-[38px] font-bold text-[#30d158] leading-none">${formatNumber(rT)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p>
             </div>
         `;
-        updateHeightSVG(t, l1, l2, rUp, rTop);
-        resultArea.classList.remove('hidden');
+        updateHeightSVG(t, l1, l2, rU, rT);
+        resArea.classList.remove('hidden');
     };
 
     function updateSideSVG(l1, l2, a, zVal, yVal) {
-        const scale = 340 / (6 * a); 
-        const joints = [];
+        const scale = 340 / (6 * a), joints = [];
         const centerWorld = l1 + (l2 / 2);
         const startJointIndex = Math.floor(centerWorld / a) - 3;
         let jointsHtml = "";
-        
         for (let i = 0; i < 7; i++) {
             const jWorld = (startJointIndex + i) * a;
             const jX = 200 + (jWorld - centerWorld) * scale;
             joints.push(jX);
-            jointsHtml += `<line x1="${jX}" y1="15" x2="${jX}" y2="185" stroke="#d1d1d6" stroke-width="1.2" stroke-dasharray="5,4" />`;
+            jointsHtml += `<line x1="${jX}" y1="15" x2="${jX}" y2="185" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,4" />`;
         }
-        
-        const winW = l2 * scale;
-        const winLE = 200 + (l1 - centerWorld) * scale;
-        const winRE = winLE + winW;
-        const jZ = [...joints].reverse().find(j => j <= winLE + 1.5);
-        const jY = joints.find(j => j >= winRE - 1.5);
+        const winW = l2 * scale, winLE = 200 + (l1 - centerWorld) * scale, winRE = winLE + winW;
+        const jZ = [...joints].reverse().find(j => j <= winLE + 1.5), jY = joints.find(j => j >= winRE - 1.5);
+        const dirX = calcDirection === 'LtoR' ? 385 : 15;
+        const dirAnchor = calcDirection === 'LtoR' ? 'end' : 'start';
 
         document.getElementById('svgContainer').innerHTML = `
             <svg viewBox="0 0 400 200" class="w-full h-full">
@@ -386,11 +529,14 @@
                 ${jointsHtml}
                 <rect x="${winLE}" y="50" width="${winW}" height="80" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" />
                 <text x="${winLE + winW/2}" y="95" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text>
+                
                 <line x1="${winLE}" y1="155" x2="${jZ ? jZ : 0}" y2="155" stroke="#0a84ff" stroke-width="3" />
                 <text x="${(winLE + (jZ ? jZ : 0))/2}" y="185" text-anchor="middle" font-size="${zVal > 999 ? 22 : 28}" fill="#0a84ff" font-weight="black">${formatNumber(zVal)}</text>
                 <line x1="${winRE}" y1="155" x2="${jY ? jY : 400}" y2="155" stroke="#30d158" stroke-width="3" />
                 <text x="${(winRE + (jY ? jY : 400))/2}" y="185" text-anchor="middle" font-size="${yVal > 999 ? 22 : 28}" fill="#30d158" font-weight="black">${formatNumber(yVal)}</text>
-                <text x="${calcDirection === 'LtoR' ? 15 : 385}" y="30" text-anchor="${calcDirection === 'LtoR' ? 'start' : 'end'}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '張出方向 →' : '← 張出方向'}</text>
+                
+                <text x="${dirX}" y="30" text-anchor="${dirAnchor}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '← 張出方向' : '張出方向 →'}</text>
+                <text x="${dirX}" y="95" text-anchor="${dirAnchor}" font-size="16" fill="#ffffff" font-weight="black">W:${formatNumber(l1)}</text>
             </svg>`;
     }
 
@@ -400,7 +546,10 @@
             <svg viewBox="0 0 400 210" class="w-full h-full">
                 <rect x="150" y="${wT}" width="100" height="${wB - wT}" fill="none" stroke="#d1d1d6" stroke-width="2" />
                 <rect x="160" y="${winYT}" width="80" height="${winH}" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" />
-                <text x="200" y="${winYT + winH/2 + 5}" text-anchor="middle" font-size="11" fill="#ffffff" font-weight="black">開口部</text>
+                <text x="200" y="${winYT + winH/2 + 5}" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text>
+                
+                <text x="200" y="${winYB + 25}" text-anchor="middle" font-size="16" fill="#ffffff" font-weight="black">H:${formatNumber(l1)}</text>
+                
                 <line x1="130" y1="${wB}" x2="130" y2="${winYB}" stroke="#ffffff" stroke-width="3" />
                 <text x="120" y="${(wB + winYB)/2 + 8}" text-anchor="end" font-size="28" fill="#ffffff" font-weight="black">${formatNumber(l1)}</text>
                 <line x1="270" y1="${wB}" x2="270" y2="${winYT}" stroke="#5e5ce6" stroke-width="3" />
@@ -414,17 +563,42 @@
     window.renderHistory = function() {
         const sideList = document.getElementById('sideHistoryList'), heightList = document.getElementById('heightHistoryList');
         const render = item => {
-            const isChecked = item.checked, color = isChecked ? 'text-[#ff9f0a]' : 'text-white', bg = isChecked ? 'bg-transparent' : 'bg-[#8e8e93]';
+            const isChecked = item.checked;
+            const themeColor = item.mode === '横' ? '#ff9f0a' : '#e67600';
+
+            const res = item.mode === '横' ? 
+                `<div class="flex justify-around pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">左側切込</p><p class="text-[24px] font-bold text-[#0a84ff] leading-none">${formatNumber(item.outputs.z)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">右側切込</p><p class="text-[24px] font-bold text-[#30d158] leading-none">${formatNumber(item.outputs.y)}</p></div></div>` : 
+                `<div class="grid grid-cols-3 pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">下切</p><p class="text-[20px] font-bold text-white">${formatNumber(item.outputs.down)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上切</p><p class="text-[20px] font-bold text-[#5e5ce6]">${formatNumber(item.outputs.up)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上寸</p><p class="text-[20px] font-bold text-[#30d158]">${formatNumber(item.outputs.top)}</p></div></div>`;
+            
             if (isChecked) {
-                const res = item.mode === '横' ? `<div class="flex justify-around pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[12px] font-bold text-silver">左側切込</p><p class="text-[28px] font-bold text-[#0a84ff] leading-none">${formatNumber(item.outputs.z)}</p></div><div class="text-center"><p class="text-[12px] font-bold text-silver">右側切込</p><p class="text-[28px] font-bold text-[#30d158] leading-none">${formatNumber(item.outputs.y)}</p></div></div>` : `<div class="grid grid-cols-3 pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[11px] font-bold text-silver">下切</p><p class="text-[24px] font-bold text-white">${formatNumber(item.outputs.down)}</p></div><div class="text-center"><p class="text-[11px] font-bold text-silver">上切</p><p class="text-[24px] font-bold text-[#5e5ce6]">${formatNumber(item.outputs.up)}</p></div><div class="text-center"><p class="text-[11px] font-bold text-silver">上寸</p><p class="text-[24px] font-bold text-[#30d158]">${formatNumber(item.outputs.top)}</p></div></div>`;
-                return `<div class="history-item py-2.5 px-4 rounded-2xl border border-[#2c2c2e] checked shadow-lg"><div class="flex justify-between items-center mb-2"><div class="flex items-center gap-3"><button onclick="toggleCheck('${item.id}', true)" class="${color}"><svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg></button><span class="bg-white text-black text-[13px] font-black px-3 py-1 rounded-full shadow-md">No. ${item.no}</span><span class="text-[16px] font-bold text-white">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span class="bg-[#ff9f0a] text-black text-[15px] font-black px-3 py-1 rounded">${item.mode}${item.calcDir==='RtoL'?'(左←)':'(左→)'}</span></div>${res}</div>`;
+                return `<div class="history-item py-2 px-4 rounded-2xl border border-[#2c2c2e] checked shadow-lg mb-2" style="border-color: ${themeColor}" onclick="applyHistoryItem('${item.id}')">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', true)" style="color: ${themeColor}"><svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg></button>
+                            <span class="bg-white text-black text-[11px] font-black px-2 py-0.5 rounded-full shadow-md transition-all">No.${item.no}</span>
+                            <span class="text-[15px] font-bold text-white ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span>
+                        </div>
+                        <span style="color: ${themeColor}" class="text-[11px] font-bold transition-all">${item.mode}${item.calcDir ? (item.calcDir==='LtoR'?'(左←)':'(左→)') : ''}</span>
+                    </div>
+                    ${res}
+                </div>`;
             } else {
-                const results = item.mode === '横' ? `<div class="flex gap-x-4"><div class="flex items-baseline"><span class="text-silver text-[15px] mr-1.5">左</span><span class="text-[16px] font-black text-[#0a84ff] tracking-tight">${formatNumber(item.outputs.z)}</span></div><div class="flex items-baseline"><span class="text-silver text-[15px] mr-1.5">右</span><span class="text-[16px] font-black text-[#30d158] tracking-tight">${formatNumber(item.outputs.y)}</span></div></div>` : `<div class="flex gap-x-4"><div class="flex items-baseline"><span class="text-silver text-[15px] mr-1.5">下</span><span class="text-[16px] font-black text-white tracking-tight">${formatNumber(item.outputs.down)}</span></div><div class="flex items-baseline"><span class="text-silver text-[15px] mr-1.5">上</span><span class="text-[16px] font-black text-[#5e5ce6] tracking-tight">${formatNumber(item.outputs.up)}</span></div><div class="flex items-baseline"><span class="text-silver text-[15px] mr-1.5">寸</span><span class="text-[16px] font-black text-[#30d158] tracking-tight">${formatNumber(item.outputs.top)}</span></div></div>`;
-                return `<div class="history-item px-3 py-3 rounded-xl border border-[#2c2c2e] flex items-center justify-between"><div class="flex items-center"><button onclick="toggleCheck('${item.id}', false)" class="${color} ${bg} rounded-full p-0.5 active:scale-125 transition-transform shadow-inner mr-2"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg></button><span class="text-silver font-bold text-[14px] min-w-[32px]">No.${item.no}</span>${item.mode==='横'?`<div class="flex items-baseline ml-3"><span class="text-silver text-[15px] mr-1.5">寸法</span><span class="text-white font-bold text-[15px]">${formatNumber(item.inputs.l1)}</span></div>`:''}</div><div class="flex-1 flex justify-center">${results}</div><span class="text-silver font-bold text-[11px] min-w-[38px] text-right uppercase tracking-tighter">${item.mode}切込</span></div>`;
+                const results = item.mode === '横' ? `<div class="flex gap-x-6"><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">左</span><span class="text-[19px] font-black text-[#0a84ff]">${formatNumber(item.outputs.z)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">右</span><span class="text-[19px] font-black text-[#30d158]">${formatNumber(item.outputs.y)}</span></div></div>` : `<div class="flex gap-x-4"><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">下</span><span class="text-[17px] font-black text-white">${formatNumber(item.outputs.down)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">上</span><span class="text-[17px] font-black text-[#5e5ce6]">${formatNumber(item.outputs.up)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">寸</span><span class="text-[17px] font-black text-[#30d158]">${formatNumber(item.outputs.top)}</span></div></div>`;
+                return `<div class="history-item px-3 py-3 rounded-xl border border-[#2c2c2e] flex flex-col gap-2 mb-2" onclick="applyHistoryItem('${item.id}')">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', false)" class="text-white bg-[#8e8e93] rounded-full p-0.5 active:scale-125 transition-transform mr-1"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg></button>
+                            <span class="text-[#d1d1d6] font-bold text-[14px] transition-all">No.${item.no}</span>
+                            <span class="text-white font-bold text-[15px] ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span>
+                        </div>
+                        <span class="text-[#d1d1d6] font-bold text-[11px] uppercase transition-all">${item.mode}切込</span>
+                    </div>
+                    <div class="flex justify-center bg-[#000] py-2 rounded-lg border border-[#2c2c2e] shadow-inner">${results}</div>
+                </div>`;
             }
         };
-        sideList.innerHTML = window.historyData.filter(d => d.mode === '横').map(render).join('') || '<p class="text-center text-silver opacity-20 py-4 text-xs italic">データなし</p>';
-        heightList.innerHTML = window.historyData.filter(d => d.mode === '縦').map(render).join('') || '<p class="text-center text-silver opacity-20 py-4 text-xs italic">データなし</p>';
+        sideList.innerHTML = window.historyData.filter(d => d.mode === '横').map(render).join('') || '<p class="text-center text-[#d1d1d6] opacity-20 py-4 text-xs italic">データなし</p>';
+        heightList.innerHTML = window.historyData.filter(d => d.mode === '縦').map(render).join('') || '<p class="text-center text-[#d1d1d6] opacity-20 py-4 text-xs italic">データなし</p>';
     };
 </script>
 
