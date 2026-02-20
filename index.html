@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
@@ -16,7 +16,6 @@
         let db, auth, userId;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'cutting-calc-app';
         let lastSavedHash = ""; 
-        let autoSaveTimeout = null;
         
         const useLocalState = typeof __firebase_config === 'undefined';
         const LOCAL_STORAGE_KEY = 'cutting_calc_history_v1';
@@ -76,13 +75,11 @@
             
             onSnapshot(historyCol, async (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                // チェック済みを優先し、その中で作成日時順に並び替え
                 window.historyData = data.sort((a, b) => {
                     if (a.checked !== b.checked) return a.checked ? -1 : 1;
                     return b.createdAt - a.createdAt;
                 });
                 
-                // チェックなしが3件を超えたら古いものを消す
                 const uncheckedItems = window.historyData.filter(item => !item.checked);
                 if (uncheckedItems.length > 3) {
                     const toDelete = uncheckedItems.slice(3); 
@@ -115,7 +112,6 @@
                     if (a.checked !== b.checked) return a.checked ? -1 : 1;
                     return b.createdAt - a.createdAt;
                 });
-                // ローカル状態でも3件制限を適用
                 const uncheckedItems = window.historyData.filter(d => !d.checked);
                 if (uncheckedItems.length > 3) {
                     const idsToDelete = uncheckedItems.slice(3).map(d => d.id);
@@ -129,13 +125,6 @@
             if (!userId) return;
             const historyCol = collection(db, 'artifacts', appId, 'users', userId, 'history');
             await addDoc(historyCol, newItem);
-        };
-
-        window.triggerAutoSave = (item) => {
-            if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
-            autoSaveTimeout = setTimeout(() => {
-                window.saveToCloud(item);
-            }, 800); // 入力停止から800ms後に保存
         };
 
         window.toggleCheck = async (id, currentStatus) => {
@@ -279,21 +268,21 @@
                 <div class="grid grid-cols-2 gap-4 mb-3">
                     <div>
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">働き幅 (＠)</label>
-                        <input type="text" inputmode="numeric" id="side_a" placeholder="働き幅" oninput="formatInput(this); calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <input type="text" inputmode="numeric" id="side_a" placeholder="働き幅" oninput="formatInput(this); calculateSide();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                     <div>
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">横幅 (開口部)</label>
-                        <input type="text" inputmode="numeric" id="side_l2" placeholder="横幅" oninput="formatInput(this); calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <input type="text" inputmode="numeric" id="side_l2" placeholder="横幅" oninput="formatInput(this); calculateSide();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                 </div>
                 <div class="flex gap-4">
                     <div class="w-20">
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 text-center">No.</label>
-                        <input type="text" inputmode="numeric" id="side_no" maxlength="2" placeholder="No" oninput="calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                        <input type="text" inputmode="numeric" id="side_no" maxlength="2" placeholder="No" oninput="calculateSide();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
                     </div>
                     <div class="flex-1">
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">寸法 (張方向↔︎対象)</label>
-                        <input type="text" inputmode="numeric" id="side_l1" placeholder="寸法" oninput="formatInput(this); calculateSide();" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                        <input type="text" inputmode="numeric" id="side_l1" placeholder="寸法" oninput="formatInput(this); calculateSide();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
                     </div>
                 </div>
             </div>
@@ -304,21 +293,21 @@
                 <div class="grid grid-cols-2 gap-4 mb-3">
                     <div>
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">全長 (L)</label>
-                        <input type="text" inputmode="numeric" id="h_total" placeholder="全長" oninput="formatInput(this); calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <input type="text" inputmode="numeric" id="h_total" placeholder="全長" oninput="formatInput(this); calculateHeight();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                     <div>
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">縦幅 (開口部)</label>
-                        <input type="text" inputmode="numeric" id="h_l2" placeholder="縦幅" oninput="formatInput(this); calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
+                        <input type="text" inputmode="numeric" id="h_l2" placeholder="縦幅" oninput="formatInput(this); calculateHeight();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-3 py-2 text-[27px] font-bold text-center outline-none shadow-inner">
                     </div>
                 </div>
                 <div class="flex gap-4">
                     <div class="w-20">
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 text-center">No.</label>
-                        <input type="text" inputmode="numeric" id="h_no" maxlength="2" placeholder="No" oninput="calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                        <input type="text" inputmode="numeric" id="h_no" maxlength="2" placeholder="No" oninput="calculateHeight();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-2 py-3 text-[27px] font-bold text-center outline-none shadow-inner input-highlight-border">
                     </div>
                     <div class="flex-1">
                         <label class="block text-[14px] font-semibold text-[#d1d1d6] mb-1 ml-1">寸法 (下↑対象)</label>
-                        <input type="text" inputmode="numeric" id="h_l1" placeholder="寸法" oninput="formatInput(this); calculateHeight();" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
+                        <input type="text" inputmode="numeric" id="h_l1" placeholder="寸法" oninput="formatInput(this); calculateHeight();" onblur="saveCurrentResult()" onkeydown="handleKey(event)" onfocus="this.select()" class="w-full rounded-xl px-3 py-3 text-[28px] font-bold text-center outline-none shadow-inner input-highlight-border">
                     </div>
                 </div>
             </div>
@@ -342,7 +331,7 @@
     <!-- 履歴エリア -->
     <div id="historyArea" class="mt-4 border-t border-[#2c2c2e] pt-6 pb-24">
         <div class="flex items-center justify-between mb-8 px-1">
-            <h2 class="text-[22px] font-bold text-white tracking-tight">計算履歴 <span class="text-[12px] font-normal text-[#8e8e93] ml-2">(自動保存:最新3件)</span></h2>
+            <h2 class="text-[22px] font-bold text-white tracking-tight">計算履歴 <span class="text-[12px] font-normal text-[#8e8e93] ml-2">(確定時に保存)</span></h2>
             <button type="button" onclick="openConfirm('all')" class="btn-gray-3d text-[11px] font-black px-4 py-1.5 rounded-full uppercase shadow-sm">一括削除</button>
         </div>
         <div class="mb-12">
@@ -416,6 +405,20 @@
         el.dataset.oldValue = el.value;
     };
 
+    // 保存トリガー：フォーカス離脱 or Enterキー
+    window.saveCurrentResult = function() {
+        if (currentResult) {
+            window.saveToCloud({...currentResult});
+        }
+    };
+
+    window.handleKey = function(e) {
+        if (e.key === 'Enter') {
+            window.saveCurrentResult();
+            e.target.blur(); // 入力確定としてフォーカスを外す
+        }
+    };
+
     window.applyHistoryItem = function(id) {
         const item = window.historyData.find(d => d.id === id);
         if (!item) return;
@@ -454,7 +457,6 @@
             <div class="bg-[#1c1c1e] rounded-2xl py-2 px-4 border border-[#2c2c2e] text-center shadow-lg"><p class="text-[13px] font-bold text-[#d1d1d6] mb-1">右側切込</p><p class="text-[38px] font-bold text-[#30d158] leading-none">${formatNumber(fY)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p></div>`;
         updateSideSVG(l1, l2, a, fZ, fY);
         resArea.classList.remove('hidden');
-        window.triggerAutoSave({...currentResult});
     };
 
     window.calculateHeight = function() {
@@ -472,16 +474,12 @@
             <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg"><p class="text-[13px] font-bold text-[#d1d1d6] mb-1">上寸法</p><p class="text-[38px] font-bold text-[#30d158] leading-none">${formatNumber(rT)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p></div>`;
         updateHeightSVG(t, l1, l2, rU, rT);
         resArea.classList.remove('hidden');
-        window.triggerAutoSave({...currentResult});
     };
 
     function updateSideSVG(l1, l2, a, zVal, yVal) {
-        // 開口部が全体の幅に占める割合を最大約65%に制限
-        // displayWidth = l2 / 0.65 ≒ l2 * 1.54
         const displayWidth = Math.max(6 * a, l2 / 0.65, l2 + 3.2 * a);
         const scale = 340 / displayWidth, centerWorld = l1 + (l2 / 2);
         
-        // 描画する点線（ジョイント）の数を画面端まで動的に計算
         const startJointIndex = Math.floor((centerWorld - displayWidth / 2) / a) - 1;
         const endJointIndex = Math.ceil((centerWorld + displayWidth / 2) / a) + 1;
         
@@ -494,7 +492,6 @@
         const winW = l2 * scale, winLE = 200 + (l1 - centerWorld) * scale, winRE = winLE + winW;
         const jZ = [...joints].reverse().find(j => j <= winLE + 1.5), jY = joints.find(j => j >= winRE - 1.5);
         
-        // ラベルの位置調整
         const dirX = calcDirection === 'LtoR' ? 385 : 15, dirAnchor = calcDirection === 'LtoR' ? 'end' : 'start';
         
         document.getElementById('svgContainer').innerHTML = `<svg viewBox="0 0 400 200" class="w-full h-full"><rect x="5" y="5" width="390" height="190" fill="none" stroke="#d1d1d6" stroke-width="1" />${jointsHtml}<rect x="${winLE}" y="50" width="${winW}" height="80" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" /><text x="${winLE + winW/2}" y="95" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text><line x1="${winLE}" y1="155" x2="${jZ ? jZ : 0}" y2="155" stroke="#0a84ff" stroke-width="3" /><text x="${(winLE + (jZ ? jZ : 0))/2}" y="185" text-anchor="middle" font-size="${zVal > 999 ? 22 : 28}" fill="#0a84ff" font-weight="black">${formatNumber(zVal)}</text><line x1="${winRE}" y1="155" x2="${jY ? jY : 400}" y2="155" stroke="#30d158" stroke-width="3" /><text x="${(winRE + (jY ? jY : 400))/2}" y="185" text-anchor="middle" font-size="${yVal > 999 ? 22 : 28}" fill="#30d158" font-weight="black">${formatNumber(yVal)}</text><text x="${dirX}" y="30" text-anchor="${dirAnchor}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '← 張出方向' : '張出方向 →'}</text><text x="${dirX}" y="95" text-anchor="${dirAnchor}" font-size="16" fill="#ffffff" font-weight="black">W:${formatNumber(l1)}</text></svg>`;
