@@ -476,16 +476,27 @@
     };
 
     function updateSideSVG(l1, l2, a, zVal, yVal) {
-        const scale = 340 / (6 * a), centerWorld = l1 + (l2 / 2), startJointIndex = Math.floor(centerWorld / a) - 3;
+        // 開口部が全体の幅に占める割合を最大約65%に制限
+        // displayWidth = l2 / 0.65 ≒ l2 * 1.54
+        const displayWidth = Math.max(6 * a, l2 / 0.65, l2 + 3.2 * a);
+        const scale = 340 / displayWidth, centerWorld = l1 + (l2 / 2);
+        
+        // 描画する点線（ジョイント）の数を画面端まで動的に計算
+        const startJointIndex = Math.floor((centerWorld - displayWidth / 2) / a) - 1;
+        const endJointIndex = Math.ceil((centerWorld + displayWidth / 2) / a) + 1;
+        
         let jointsHtml = "", joints = [];
-        for (let i = 0; i < 7; i++) {
-            const jWorld = (startJointIndex + i) * a, jX = 200 + (jWorld - centerWorld) * scale;
+        for (let i = startJointIndex; i <= endJointIndex; i++) {
+            const jWorld = i * a, jX = 200 + (jWorld - centerWorld) * scale;
             joints.push(jX);
             jointsHtml += `<line x1="${jX}" y1="15" x2="${jX}" y2="185" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,4" />`;
         }
         const winW = l2 * scale, winLE = 200 + (l1 - centerWorld) * scale, winRE = winLE + winW;
         const jZ = [...joints].reverse().find(j => j <= winLE + 1.5), jY = joints.find(j => j >= winRE - 1.5);
+        
+        // ラベルの位置調整
         const dirX = calcDirection === 'LtoR' ? 385 : 15, dirAnchor = calcDirection === 'LtoR' ? 'end' : 'start';
+        
         document.getElementById('svgContainer').innerHTML = `<svg viewBox="0 0 400 200" class="w-full h-full"><rect x="5" y="5" width="390" height="190" fill="none" stroke="#d1d1d6" stroke-width="1" />${jointsHtml}<rect x="${winLE}" y="50" width="${winW}" height="80" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" /><text x="${winLE + winW/2}" y="95" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text><line x1="${winLE}" y1="155" x2="${jZ ? jZ : 0}" y2="155" stroke="#0a84ff" stroke-width="3" /><text x="${(winLE + (jZ ? jZ : 0))/2}" y="185" text-anchor="middle" font-size="${zVal > 999 ? 22 : 28}" fill="#0a84ff" font-weight="black">${formatNumber(zVal)}</text><line x1="${winRE}" y1="155" x2="${jY ? jY : 400}" y2="155" stroke="#30d158" stroke-width="3" /><text x="${(winRE + (jY ? jY : 400))/2}" y="185" text-anchor="middle" font-size="${yVal > 999 ? 22 : 28}" fill="#30d158" font-weight="black">${formatNumber(yVal)}</text><text x="${dirX}" y="30" text-anchor="${dirAnchor}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '← 張出方向' : '張出方向 →'}</text><text x="${dirX}" y="95" text-anchor="${dirAnchor}" font-size="16" fill="#ffffff" font-weight="black">W:${formatNumber(l1)}</text></svg>`;
     }
 
