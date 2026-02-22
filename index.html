@@ -88,7 +88,6 @@
     </div>
 
     <div id="contentArea">
-        <!-- 横切込入力 -->
         <div id="sideContent">
             <div class="input-card p-4 mb-4">
                 <div class="grid grid-cols-2 gap-4 mb-3">
@@ -114,7 +113,6 @@
             </div>
         </div>
 
-        <!-- 縦切込入力 -->
         <div id="heightContent" class="hidden">
             <div class="input-card p-4 mb-4">
                 <div class="grid grid-cols-2 gap-4 mb-3">
@@ -141,7 +139,7 @@
         </div>
     </div>
 
-    <!-- 結果表示エリア -->
+    <!-- 結果・図面 -->
     <div id="resultArea" class="hidden space-y-3 mb-10">
         <div id="directionToggle" class="flex justify-center mb-1">
             <div class="dir-switch-bar flex gap-1">
@@ -155,20 +153,20 @@
         <div id="numericResults" class="grid gap-3"></div>
     </div>
 
-    <!-- 履歴エリア -->
+    <!-- 履歴 -->
     <div id="historyArea" class="mt-4 border-t border-[#2c2c2e] pt-6 pb-24">
         <div class="flex items-center justify-between mb-8 px-1">
-            <h2 class="text-[22px] font-bold text-white tracking-tight">計算履歴 <span class="text-[12px] font-normal text-[#8e8e93] ml-2">(確定時に保存)</span></h2>
+            <h2 class="text-[22px] font-bold text-white tracking-tight">計算履歴</h2>
             <button type="button" onclick="openConfirm('all')" class="btn-gray-3d text-[11px] font-black px-4 py-1.5 rounded-full uppercase shadow-sm">一括削除</button>
         </div>
-        <div class="mb-12">
+        <div class="mb-12" id="sideHistorySection">
             <div class="flex justify-between items-center mb-5 px-1">
                 <h3 class="text-[#d1d1d6] text-[18px] font-bold uppercase tracking-widest">横切込の履歴</h3>
                 <button type="button" onclick="openConfirm('category', '横')" class="btn-silver-3d text-[10px] font-black px-4 py-1.5 rounded-full shadow-sm">削除</button>
             </div>
             <div id="sideHistoryList" class="space-y-4"></div>
         </div>
-        <div>
+        <div id="heightHistorySection">
             <div class="flex justify-between items-center mb-5 px-1">
                 <h3 class="text-[#d1d1d6] text-[18px] font-bold uppercase tracking-widest">縦切込の履歴</h3>
                 <button type="button" onclick="openConfirm('category', '縦')" class="btn-silver-3d text-[10px] font-black px-4 py-1.5 rounded-full shadow-sm">削除</button>
@@ -191,7 +189,6 @@
 </div>
 
 <script>
-    // --- 永続化（LocalStorage）のロジック ---
     const LOCAL_STORAGE_KEY = 'cutting_calc_local_v1';
     window.historyData = [];
     let lastSavedHash = "";
@@ -199,44 +196,28 @@
     function loadLocalHistory() {
         const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
         if (stored) {
-            try {
-                window.historyData = JSON.parse(stored);
-            } catch(e) {
-                window.historyData = [];
-            }
+            try { window.historyData = JSON.parse(stored); } catch(e) { window.historyData = []; }
         }
         renderHistory();
     }
-
-    function saveLocalHistory() {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(window.historyData));
-    }
+    function saveLocalHistory() { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(window.historyData)); }
 
     window.saveToHistory = function(item) {
         if (!item) return;
-        
-        // 重複チェック
         const hash = JSON.stringify(item.inputs) + item.mode + item.no + (item.calcDir || '');
         if (hash === lastSavedHash) return; 
         lastSavedHash = hash;
-
         const newItem = { ...item, id: Date.now().toString(), checked: false, createdAt: Date.now() };
-
         window.historyData.unshift(newItem);
-
-        // 並び替え: チェックあり優先 -> 作成日時順
         window.historyData.sort((a, b) => {
             if (a.checked !== b.checked) return a.checked ? -1 : 1;
             return b.createdAt - a.createdAt;
         });
-
-        // チェックされていない履歴は直近3件までにする整理
         const uncheckedItems = window.historyData.filter(d => !d.checked);
         if (uncheckedItems.length > 3) {
             const idsToDelete = uncheckedItems.slice(3).map(d => d.id);
             window.historyData = window.historyData.filter(d => !idsToDelete.includes(d.id));
         }
-
         saveLocalHistory();
         renderHistory();
     };
@@ -244,17 +225,14 @@
     window.toggleCheck = function(id, currentStatus) {
         const item = window.historyData.find(d => d.id === id);
         if (item) item.checked = !currentStatus;
-        
         window.historyData.sort((a, b) => {
             if (a.checked !== b.checked) return a.checked ? -1 : 1;
             return b.createdAt - a.createdAt;
         });
-        
         saveLocalHistory();
         renderHistory();
     };
 
-    // --- 計算・UIロジック ---
     let currentMode = 'side', currentResult = null, calcDirection = 'LtoR';
 
     function switchTab(mode) {
@@ -269,15 +247,6 @@
         if (mode === 'side') calculateSide(); else calculateHeight();
         document.getElementById('directionToggle').classList.toggle('hidden', mode !== 'side');
     }
-
-    // スワイプで切り替え
-    let startX = 0;
-    document.getElementById('mainApp').addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, {passive: true});
-    document.getElementById('mainApp').addEventListener('touchend', (e) => {
-        const endX = e.changedTouches[0].clientX, diffX = endX - startX, threshold = 70;
-        if (diffX > threshold) { if (currentMode !== 'side') switchTab('side'); }
-        else if (diffX < -threshold) { if (currentMode !== 'height') switchTab('height'); }
-    });
 
     function setCalcDir(dir) {
         calcDirection = dir;
@@ -296,16 +265,8 @@
         el.dataset.oldValue = el.value;
     };
 
-    window.saveCurrentResult = function() {
-        if (currentResult) window.saveToHistory({...currentResult});
-    };
-
-    window.handleKey = function(e) {
-        if (e.key === 'Enter') {
-            window.saveCurrentResult();
-            e.target.blur();
-        }
-    };
+    window.saveCurrentResult = function() { if (currentResult) window.saveToHistory({...currentResult}); };
+    window.handleKey = function(e) { if (e.key === 'Enter') { window.saveCurrentResult(); e.target.blur(); } };
 
     window.applyHistoryItem = function(id) {
         const item = window.historyData.find(d => d.id === id);
@@ -334,8 +295,16 @@
         const a = parseFloat(aVal), l2 = parseFloat(l2Val), l1 = parseFloat(l1Val);
         const resArea = document.getElementById('resultArea');
         if (isNaN(l1) || isNaN(l2) || isNaN(a) || a <= 0) { resArea.classList.add('hidden'); currentResult = null; return; }
+        
         let z, y;
-        if (calcDirection === 'LtoR') { y = l1 % a; z = (a - ((l1 + l2) % a)) % a; } else { z = l1 % a; y = (a - ((l1 + l2) % a)) % a; }
+        if (calcDirection === 'LtoR') {
+            y = l1 % a;
+            z = (a - ((l1 + l2) % a)) % a;
+        } else {
+            z = l1 % a;
+            y = (a - ((l1 + l2) % a)) % a;
+        }
+
         const fZ = Math.round(z * 10) / 10, fY = Math.round(y * 10) / 10;
         currentResult = { mode: '横', no: noVal || '-', inputs: { a, l2, l1 }, outputs: { z: fZ, y: fY }, calcDir: calcDirection };
         
@@ -365,27 +334,60 @@
     };
 
     function updateSideSVG(l1, l2, a, zVal, yVal) {
-        const displayWidth = Math.max(6 * a, l2 / 0.65, l2 + 3.2 * a);
-        const scale = 340 / displayWidth, centerWorld = l1 + (l2 / 2);
-        const startJointIndex = Math.floor((centerWorld - displayWidth / 2) / a) - 1;
-        const endJointIndex = Math.ceil((centerWorld + displayWidth / 2) / a) + 1;
-        
-        let jointsHtml = "", joints = [];
-        for (let i = startJointIndex; i <= endJointIndex; i++) {
-            const jWorld = i * a, jX = 200 + (jWorld - centerWorld) * scale;
-            joints.push(jX);
-            jointsHtml += `<line x1="${jX}" y1="15" x2="${jX}" y2="185" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,4" />`;
+        const displayWidth = Math.max(4 * a, l2 * 2);
+        const scale = 320 / displayWidth;
+        const centerWorld = l1 + (l2 / 2);
+        const winW = l2 * scale;
+        const winLE = 200 + (l1 - centerWorld) * scale;
+        const winRE = winLE + winW;
+
+        let jointsHtml = "";
+        let currentJX = winLE - (zVal * scale);
+        while (currentJX > -50) {
+            jointsHtml += `<line x1="${currentJX}" y1="15" x2="${currentJX}" y2="185" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,4" />`;
+            currentJX -= (a * scale);
         }
-        const winW = l2 * scale, winLE = 200 + (l1 - centerWorld) * scale, winRE = winLE + winW;
-        const jZ = [...joints].reverse().find(j => j <= winLE + 1.5), jY = joints.find(j => j >= winRE - 1.5);
-        const dirX = calcDirection === 'LtoR' ? 385 : 15, dirAnchor = calcDirection === 'LtoR' ? 'end' : 'start';
-        
-        document.getElementById('svgContainer').innerHTML = `<svg viewBox="0 0 400 200" class="w-full h-full"><rect x="5" y="5" width="390" height="190" fill="none" stroke="#d1d1d6" stroke-width="1" />${jointsHtml}<rect x="${winLE}" y="50" width="${winW}" height="80" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" /><text x="${winLE + winW/2}" y="95" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text><line x1="${winLE}" y1="155" x2="${jZ ? jZ : 0}" y2="155" stroke="#0a84ff" stroke-width="3" /><text x="${(winLE + (jZ ? jZ : 0))/2}" y="185" text-anchor="middle" font-size="${zVal > 999 ? 22 : 28}" fill="#0a84ff" font-weight="black">${formatNumber(zVal)}</text><line x1="${winRE}" y1="155" x2="${jY ? jY : 400}" y2="155" stroke="#30d158" stroke-width="3" /><text x="${(winRE + (jY ? jY : 400))/2}" y="185" text-anchor="middle" font-size="${yVal > 999 ? 22 : 28}" fill="#30d158" font-weight="black">${formatNumber(yVal)}</text><text x="${dirX}" y="30" text-anchor="${dirAnchor}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '← 張出方向' : '張出方向 →'}</text><text x="${dirX}" y="95" text-anchor="${dirAnchor}" font-size="16" fill="#ffffff" font-weight="black">W:${formatNumber(l1)}</text></svg>`;
+        currentJX = winRE + (yVal * scale);
+        while (currentJX < 450) {
+            jointsHtml += `<line x1="${currentJX}" y1="15" x2="${currentJX}" y2="185" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,4" />`;
+            currentJX += (a * scale);
+        }
+        currentJX = winLE - (zVal * scale) + (a * scale);
+        while (currentJX < winRE) {
+            if (currentJX > winLE + 1) {
+                jointsHtml += `<line x1="${currentJX}" y1="15" x2="${currentJX}" y2="185" stroke="#333333" stroke-width="1" stroke-dasharray="3,3" />`;
+            }
+            currentJX += (a * scale);
+        }
+
+        const jLX = winLE - (zVal * scale);
+        const jRX = winRE + (yVal * scale);
+        const dirX = calcDirection === 'LtoR' ? 385 : 15;
+        const dirAnchor = calcDirection === 'LtoR' ? 'end' : 'start';
+
+        document.getElementById('svgContainer').innerHTML = `
+            <svg viewBox="0 0 400 200" class="w-full h-full">
+                <rect x="5" y="5" width="390" height="190" fill="none" stroke="#d1d1d6" stroke-width="1" />
+                ${jointsHtml}
+                <rect x="${winLE}" y="50" width="${winW}" height="80" fill="#1c1c1e" stroke="#ffffff" stroke-width="2.5" />
+                <text x="${winLE + winW/2}" y="95" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text>
+                
+                <line x1="${winLE}" y1="155" x2="${jLX}" y2="155" stroke="#0a84ff" stroke-width="3" />
+                <circle cx="${winLE}" cy="155" r="2.5" fill="#0a84ff" />
+                <text x="${(winLE + jLX)/2}" y="182" text-anchor="middle" font-size="${zVal > 999 ? 20 : 26}" fill="#0a84ff" font-weight="black">${formatNumber(zVal)}</text>
+                
+                <line x1="${winRE}" y1="155" x2="${jRX}" y2="155" stroke="#30d158" stroke-width="3" />
+                <circle cx="${winRE}" cy="155" r="2.5" fill="#30d158" />
+                <text x="${(winRE + jRX)/2}" y="182" text-anchor="middle" font-size="${yVal > 999 ? 20 : 26}" fill="#30d158" font-weight="black">${formatNumber(yVal)}</text>
+                
+                <text x="${dirX}" y="30" text-anchor="${dirAnchor}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '← 張出方向' : '張出方向 →'}</text>
+                <text x="${dirX}" y="95" text-anchor="${dirAnchor}" font-size="16" fill="#ffffff" font-weight="black">L1:${formatNumber(l1)}</text>
+            </svg>`;
     }
 
     function updateHeightSVG(total, l1, l2, rUp, rTop) {
         const hS = 160 / total, wB = 185, wT = 25, winYB = wB - (l1 * hS), winH = l2 * hS, winYT = winYB - winH;
-        document.getElementById('svgContainer').innerHTML = `<svg viewBox="0 0 400 210" class="w-full h-full"><rect x="150" y="${wT}" width="100" height="${wB - wT}" fill="none" stroke="#d1d1d6" stroke-width="2" /><rect x="160" y="${winYT}" width="80" height="${winH}" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" /><text x="200" y="${winYT + winH/2 + 5}" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text><text x="200" y="${winYB + 25}" text-anchor="middle" font-size="16" fill="#ffffff" font-weight="black">H:${formatNumber(l1)}</text><line x1="130" y1="${wB}" x2="130" y2="${winYB}" stroke="#ffffff" stroke-width="3" /><text x="120" y="${(wB + winYB)/2 + 8}" text-anchor="end" font-size="28" fill="#ffffff" font-weight="black">${formatNumber(l1)}</text><line x1="270" y1="${wB}" x2="270" y2="${winYT}" stroke="#5e5ce6" stroke-width="3" /><text x="280" y="${(wB + winYT)/2 + 8}" text-anchor="start" font-size="28" fill="#5e5ce6" font-weight="black">${formatNumber(rUp)}</text><line x1="130" y1="${winYT}" x2="130" y2="${wT}" stroke="#30d158" stroke-width="3" /><text x="120" y="${(winYT + wT)/2 + 8}" text-anchor="end" font-size="28" fill="#30d158" font-weight="black">${formatNumber(rTop)}</text><text x="150" y="${wB + 15}" font-size="10" fill="#d1d1d6" font-weight="bold">下端 0</text></svg>`;
+        document.getElementById('svgContainer').innerHTML = `<svg viewBox="0 0 400 210" class="w-full h-full"><rect x="150" y="${wT}" width="100" height="${wB - wT}" fill="none" stroke="#d1d1d6" stroke-width="2" /><rect x="160" y="${winYT}" width="80" height="${winH}" fill="#1c1c1e" stroke="#ffffff" stroke-width="2.5" /><text x="200" y="${winYT + winH/2 + 5}" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text><text x="200" y="${winYB + 25}" text-anchor="middle" font-size="16" fill="#ffffff" font-weight="black">H:${formatNumber(l1)}</text><line x1="130" y1="${wB}" x2="130" y2="${winYB}" stroke="#ffffff" stroke-width="3" /><text x="120" y="${(wB + winYB)/2 + 8}" text-anchor="end" font-size="28" fill="#ffffff" font-weight="black">${formatNumber(l1)}</text><line x1="270" y1="${wB}" x2="270" y2="${winYT}" stroke="#5e5ce6" stroke-width="3" /><text x="280" y="${(wB + winYT)/2 + 8}" text-anchor="start" font-size="28" fill="#5e5ce6" font-weight="black">${formatNumber(rUp)}</text><line x1="130" y1="${winYT}" x2="130" y2="${wT}" stroke="#30d158" stroke-width="3" /><text x="120" y="${(winYT + wT)/2 + 8}" text-anchor="end" font-size="28" fill="#30d158" font-weight="black">${formatNumber(rTop)}</text><text x="150" y="${wB + 15}" font-size="10" fill="#d1d1d6" font-weight="bold">下端 0</text></svg>`;
     }
 
     window.renderHistory = function() {
@@ -396,11 +398,15 @@
                 `<div class="flex justify-around pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">左側切込</p><p class="text-[24px] font-bold text-[#0a84ff] leading-none">${formatNumber(item.outputs.z)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">右側切込</p><p class="text-[24px] font-bold text-[#30d158] leading-none">${formatNumber(item.outputs.y)}</p></div></div>` : 
                 `<div class="grid grid-cols-3 pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">下切</p><p class="text-[20px] font-bold text-white">${formatNumber(item.outputs.down)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上切</p><p class="text-[20px] font-bold text-[#5e5ce6]">${formatNumber(item.outputs.up)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上寸</p><p class="text-[20px] font-bold text-[#30d158]">${formatNumber(item.outputs.top)}</p></div></div>`;
             
+            // 鍵マークのSVG (保護中: 閉じた鍵 / 未保護: 開いた鍵の枠)
+            const lockedSvg = `<svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>`;
+            const unlockedSvg = `<svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H15V7a5 5 0 00-5-5zM8 7a2 2 0 114 0v2H8V7z" /></svg>`;
+
             if (isChecked) {
-                return `<div class="history-item py-2 px-4 rounded-2xl border border-[#2c2c2e] checked shadow-lg mb-2" style="border-color: ${themeColor}" onclick="applyHistoryItem('${item.id}')"><div class="flex justify-between items-center mb-1"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', true)" style="color: ${themeColor}"><svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\"/></svg></button><span class="bg-white text-black text-[11px] font-black px-2 py-0.5 rounded-full shadow-md transition-all">No.${item.no}</span><span class="text-[15px] font-bold text-white ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span style="color: ${themeColor}" class="text-[11px] font-bold transition-all">${item.mode}${item.calcDir ? (item.calcDir==='LtoR'?'(左←)':'(左→)') : ''}</span></div>${res}</div>`;
+                return `<div class="history-item py-2 px-4 rounded-2xl border border-[#2c2c2e] checked shadow-lg mb-2" style="border-color: ${themeColor}" onclick="applyHistoryItem('${item.id}')"><div class="flex justify-between items-center mb-1"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', true)" style="color: ${themeColor}">${lockedSvg}</button><span class="bg-white text-black text-[11px] font-black px-2 py-0.5 rounded-full shadow-md transition-all">No.${item.no}</span><span class="text-[15px] font-bold text-white ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span style="color: ${themeColor}" class="text-[11px] font-bold transition-all">${item.mode}${item.calcDir ? (item.calcDir==='LtoR'?'(左←)':'(左→)') : ''}</span></div>${res}</div>`;
             } else {
                 const results = item.mode === '横' ? `<div class="flex gap-x-6"><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">左</span><span class="text-[19px] font-black text-[#0a84ff]">${formatNumber(item.outputs.z)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">右</span><span class="text-[19px] font-black text-[#30d158]">${formatNumber(item.outputs.y)}</span></div></div>` : `<div class="flex gap-x-4"><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">下</span><span class="text-[17px] font-black text-white">${formatNumber(item.outputs.down)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">上</span><span class="text-[17px] font-black text-[#5e5ce6]">${formatNumber(item.outputs.up)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">寸</span><span class="text-[17px] font-black text-[#30d158]">${formatNumber(item.outputs.top)}</span></div></div>`;
-                return `<div class="history-item px-3 py-3 rounded-xl border border-[#2c2c2e] flex flex-col gap-2 mb-2" onclick="applyHistoryItem('${item.id}')"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', false)" class="text-white bg-[#444] rounded-full p-0.5 active:scale-125 transition-transform mr-1"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\"/></svg></button><span class="text-[#d1d1d6] font-bold text-[14px] transition-all">No.${item.no}</span><span class="text-white font-bold text-[15px] ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span class="text-[#d1d1d6] font-bold text-[11px] uppercase transition-all">${item.mode}切込</span></div><div class="flex justify-center bg-[#000] py-2 rounded-lg border border-[#2c2c2e] shadow-inner">${results}</div></div>`;
+                return `<div class="history-item px-3 py-3 rounded-xl border border-[#2c2c2e] flex flex-col gap-2 mb-2" onclick="applyHistoryItem('${item.id}')"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', false)" class="text-[#636366] bg-[#2c2c2e] rounded-full p-1 active:scale-125 transition-transform mr-1">${unlockedSvg}</button><span class="text-[#d1d1d6] font-bold text-[14px] transition-all">No.${item.no}</span><span class="text-white font-bold text-[15px] ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span class="text-[#d1d1d6] font-bold text-[11px] uppercase transition-all">${item.mode}切込</span></div><div class="flex justify-center bg-[#000] py-2 rounded-lg border border-[#2c2c2e] shadow-inner">${results}</div></div>`;
             }
         };
         sideList.innerHTML = window.historyData.filter(d => d.mode === '横').map(render).join('') || '<p class="text-center text-[#d1d1d6] opacity-20 py-4 text-xs italic">データなし</p>';
@@ -411,21 +417,19 @@
         const modal = document.getElementById('customConfirmModal');
         const msg = document.getElementById('confirmMessage');
         window.pendingAction = { action, mode };
-        msg.innerText = action === 'category' ? `${mode}切込の履歴を削除しますか？` : "全ての履歴を一括削除しますか？";
+        msg.innerText = action === 'all' ? "全ての履歴を一括削除しますか？\n（鍵マークの項目は削除されません）" : `${mode}切込の履歴を削除しますか？\n（鍵マークの項目は削除されません）`;
         modal.classList.remove('hidden');
     };
 
     window.executeConfirm = function() {
         if (!window.pendingAction) return;
         const { action, mode } = window.pendingAction;
-        
         window.historyData = window.historyData.filter(d => {
-            if (d.checked) return true; // チェック済みは残す
+            if (d.checked) return true;
             if (action === 'all') return false;
             if (action === 'category' && d.mode === mode) return false;
             return true;
         });
-
         document.getElementById('customConfirmModal').classList.add('hidden');
         saveLocalHistory();
         renderHistory();
