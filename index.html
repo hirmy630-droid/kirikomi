@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- ズームを有効にするために viewport の制限を解除 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>切込寸法 計算アプリ</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -20,7 +21,14 @@
             --theme-btn-shadow: #994f00;
         }
 
-        body { background-color: #000000; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; overflow-x: hidden; touch-action: pan-y; }
+        /* touch-action を manipulation に変更してズームを許可 */
+        body { 
+            background-color: #000000; 
+            color: #ffffff; 
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; 
+            overflow-x: hidden; 
+            touch-action: manipulation; 
+        }
         .app-container { max-width: 600px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; transition: background-color 0.3s ease; }
         .input-card { background: #1c1c1e; border-radius: 14px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); }
         
@@ -398,7 +406,6 @@
                 `<div class="flex justify-around pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">左側切込</p><p class="text-[24px] font-bold text-[#0a84ff] leading-none">${formatNumber(item.outputs.z)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">右側切込</p><p class="text-[24px] font-bold text-[#30d158] leading-none">${formatNumber(item.outputs.y)}</p></div></div>` : 
                 `<div class="grid grid-cols-3 pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">下切</p><p class="text-[20px] font-bold text-white">${formatNumber(item.outputs.down)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上切</p><p class="text-[20px] font-bold text-[#5e5ce6]">${formatNumber(item.outputs.up)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上寸</p><p class="text-[20px] font-bold text-[#30d158]">${formatNumber(item.outputs.top)}</p></div></div>`;
             
-            // 鍵マークのSVG (保護中: 閉じた鍵 / 未保護: 開いた鍵の枠)
             const lockedSvg = `<svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>`;
             const unlockedSvg = `<svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H15V7a5 5 0 00-5-5zM8 7a2 2 0 114 0v2H8V7z" /></svg>`;
 
