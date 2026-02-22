@@ -1,185 +1,10 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>切込寸法 計算アプリ - Dark Edition</title>
+    <title>切込寸法 計算アプリ</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase Libraries -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query, deleteDoc, doc, getDocs, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Global state
-        window.historyData = [];
-        let db, auth, userId;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'cutting-calc-app';
-        let lastSavedHash = ""; 
-        
-        const useLocalState = typeof __firebase_config === 'undefined';
-        const LOCAL_STORAGE_KEY = 'cutting_calc_history_v1';
-
-        const loadLocalHistory = () => {
-            const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-            if (stored) {
-                try {
-                    window.historyData = JSON.parse(stored);
-                } catch(e) {
-                    window.historyData = [];
-                }
-            }
-            window.renderHistory();
-        };
-
-        const saveLocalHistory = () => {
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(window.historyData));
-        };
-
-        const initFirebase = async () => {
-            if (useLocalState) {
-                loadLocalHistory();
-                return;
-            }
-
-            try {
-                const firebaseConfig = JSON.parse(__firebase_config);
-                const app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                };
-
-                await initAuth();
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        loadHistory();
-                    }
-                });
-            } catch (e) {
-                console.error("Firebase初期化エラー:", e);
-            }
-        };
-
-        const loadHistory = () => {
-            if (useLocalState || !userId) return;
-            const historyCol = collection(db, 'artifacts', appId, 'users', userId, 'history');
-            
-            onSnapshot(historyCol, async (snapshot) => {
-                const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                window.historyData = data.sort((a, b) => {
-                    if (a.checked !== b.checked) return a.checked ? -1 : 1;
-                    return b.createdAt - a.createdAt;
-                });
-                
-                const uncheckedItems = window.historyData.filter(item => !item.checked);
-                if (uncheckedItems.length > 3) {
-                    const toDelete = uncheckedItems.slice(3); 
-                    const batch = writeBatch(db);
-                    toDelete.forEach(item => {
-                        batch.delete(doc(db, 'artifacts', appId, 'users', userId, 'history', item.id));
-                    });
-                    await batch.commit();
-                }
-                window.renderHistory();
-            }, (error) => {
-                console.error("Firestore Loading Error:", error);
-            });
-        };
-
-        window.saveToCloud = async (item) => {
-            if (!item) return;
-            
-            // 内容が変わっていない場合は保存しない
-            const hash = JSON.stringify(item.inputs) + item.mode + item.no + (item.calcDir || '');
-            if (hash === lastSavedHash) return; 
-            lastSavedHash = hash;
-
-            const newItem = { ...item, checked: false, createdAt: Date.now() };
-
-            if (useLocalState) {
-                newItem.id = Date.now().toString();
-                window.historyData.unshift(newItem);
-                window.historyData.sort((a, b) => {
-                    if (a.checked !== b.checked) return a.checked ? -1 : 1;
-                    return b.createdAt - a.createdAt;
-                });
-                const uncheckedItems = window.historyData.filter(d => !d.checked);
-                if (uncheckedItems.length > 3) {
-                    const idsToDelete = uncheckedItems.slice(3).map(d => d.id);
-                    window.historyData = window.historyData.filter(d => !idsToDelete.includes(d.id));
-                }
-                saveLocalHistory();
-                window.renderHistory();
-                return;
-            }
-
-            if (!userId) return;
-            const historyCol = collection(db, 'artifacts', appId, 'users', userId, 'history');
-            await addDoc(historyCol, newItem);
-        };
-
-        window.toggleCheck = async (id, currentStatus) => {
-            if (useLocalState) {
-                const item = window.historyData.find(d => d.id === id);
-                if (item) item.checked = !currentStatus;
-                window.historyData.sort((a, b) => {
-                    if (a.checked !== b.checked) return a.checked ? -1 : 1;
-                    return b.createdAt - a.createdAt;
-                });
-                saveLocalHistory();
-                window.renderHistory();
-                return;
-            }
-            if (!userId) return;
-            const docRef = doc(db, 'artifacts', appId, 'users', userId, 'history', id);
-            await updateDoc(docRef, { checked: !currentStatus });
-        };
-
-        window.openConfirm = (action, mode = '') => {
-            const modal = document.getElementById('customConfirmModal');
-            const msg = document.getElementById('confirmMessage');
-            window.pendingAction = { action, mode };
-            msg.innerText = action === 'category' ? `${mode}切込の履歴を削除しますか？` : "全ての履歴を一括削除しますか？";
-            modal.classList.remove('hidden');
-        };
-
-        window.executeConfirm = async () => {
-            if (!window.pendingAction) return;
-            const { action, mode } = window.pendingAction;
-            if (useLocalState) {
-                window.historyData = window.historyData.filter(d => {
-                    if (d.checked) return true;
-                    if (action === 'all') return false;
-                    if (action === 'category' && d.mode === mode) return false;
-                    return true;
-                });
-                document.getElementById('customConfirmModal').classList.add('hidden');
-                saveLocalHistory();
-                window.renderHistory();
-                return;
-            }
-            if (!userId) return;
-            let itemsToDelete = window.historyData.filter(d => !d.checked && (action === 'all' || d.mode === mode));
-            if (itemsToDelete.length > 0) {
-                const batch = writeBatch(db);
-                itemsToDelete.forEach(d => batch.delete(doc(db, 'artifacts', appId, 'users', userId, 'history', d.id)));
-                await batch.commit();
-            }
-            document.getElementById('customConfirmModal').classList.add('hidden');
-        };
-
-        window.onload = initFirebase;
-    </script>
-
     <style>
         :root {
             --theme-color: #ff9f0a;
@@ -263,6 +88,7 @@
     </div>
 
     <div id="contentArea">
+        <!-- 横切込入力 -->
         <div id="sideContent">
             <div class="input-card p-4 mb-4">
                 <div class="grid grid-cols-2 gap-4 mb-3">
@@ -288,6 +114,7 @@
             </div>
         </div>
 
+        <!-- 縦切込入力 -->
         <div id="heightContent" class="hidden">
             <div class="input-card p-4 mb-4">
                 <div class="grid grid-cols-2 gap-4 mb-3">
@@ -364,6 +191,70 @@
 </div>
 
 <script>
+    // --- 永続化（LocalStorage）のロジック ---
+    const LOCAL_STORAGE_KEY = 'cutting_calc_local_v1';
+    window.historyData = [];
+    let lastSavedHash = "";
+
+    function loadLocalHistory() {
+        const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (stored) {
+            try {
+                window.historyData = JSON.parse(stored);
+            } catch(e) {
+                window.historyData = [];
+            }
+        }
+        renderHistory();
+    }
+
+    function saveLocalHistory() {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(window.historyData));
+    }
+
+    window.saveToHistory = function(item) {
+        if (!item) return;
+        
+        // 重複チェック
+        const hash = JSON.stringify(item.inputs) + item.mode + item.no + (item.calcDir || '');
+        if (hash === lastSavedHash) return; 
+        lastSavedHash = hash;
+
+        const newItem = { ...item, id: Date.now().toString(), checked: false, createdAt: Date.now() };
+
+        window.historyData.unshift(newItem);
+
+        // 並び替え: チェックあり優先 -> 作成日時順
+        window.historyData.sort((a, b) => {
+            if (a.checked !== b.checked) return a.checked ? -1 : 1;
+            return b.createdAt - a.createdAt;
+        });
+
+        // チェックされていない履歴は直近3件までにする整理
+        const uncheckedItems = window.historyData.filter(d => !d.checked);
+        if (uncheckedItems.length > 3) {
+            const idsToDelete = uncheckedItems.slice(3).map(d => d.id);
+            window.historyData = window.historyData.filter(d => !idsToDelete.includes(d.id));
+        }
+
+        saveLocalHistory();
+        renderHistory();
+    };
+
+    window.toggleCheck = function(id, currentStatus) {
+        const item = window.historyData.find(d => d.id === id);
+        if (item) item.checked = !currentStatus;
+        
+        window.historyData.sort((a, b) => {
+            if (a.checked !== b.checked) return a.checked ? -1 : 1;
+            return b.createdAt - a.createdAt;
+        });
+        
+        saveLocalHistory();
+        renderHistory();
+    };
+
+    // --- 計算・UIロジック ---
     let currentMode = 'side', currentResult = null, calcDirection = 'LtoR';
 
     function switchTab(mode) {
@@ -379,10 +270,10 @@
         document.getElementById('directionToggle').classList.toggle('hidden', mode !== 'side');
     }
 
+    // スワイプで切り替え
     let startX = 0;
-    const mainApp = document.getElementById('mainApp');
-    mainApp.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, {passive: true});
-    mainApp.addEventListener('touchend', (e) => {
+    document.getElementById('mainApp').addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, {passive: true});
+    document.getElementById('mainApp').addEventListener('touchend', (e) => {
         const endX = e.changedTouches[0].clientX, diffX = endX - startX, threshold = 70;
         if (diffX > threshold) { if (currentMode !== 'side') switchTab('side'); }
         else if (diffX < -threshold) { if (currentMode !== 'height') switchTab('height'); }
@@ -396,7 +287,7 @@
     }
 
     function formatNumber(num) { return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
-    function unformatNumber(str) { return str ? str.replace(/,/g, '') : ''; }
+    function unformatNumber(str) { return str ? str.toString().replace(/,/g, '') : ''; }
 
     window.formatInput = function(el) {
         let val = unformatNumber(el.value);
@@ -405,17 +296,14 @@
         el.dataset.oldValue = el.value;
     };
 
-    // 保存トリガー：フォーカス離脱 or Enterキー
     window.saveCurrentResult = function() {
-        if (currentResult) {
-            window.saveToCloud({...currentResult});
-        }
+        if (currentResult) window.saveToHistory({...currentResult});
     };
 
     window.handleKey = function(e) {
         if (e.key === 'Enter') {
             window.saveCurrentResult();
-            e.target.blur(); // 入力確定としてフォーカスを外す
+            e.target.blur();
         }
     };
 
@@ -438,7 +326,7 @@
             document.getElementById('h_no').value = item.no;
             calculateHeight();
         }
-        setTimeout(() => { const el = document.getElementById('resultArea'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
+        setTimeout(() => { document.getElementById('resultArea').scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
     };
 
     window.calculateSide = function() {
@@ -471,15 +359,14 @@
         document.getElementById('numericResults').innerHTML = `
             <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg"><p class="text-[13px] font-bold text-[#d1d1d6] mb-1">下 切込</p><p class="text-[38px] font-bold text-white leading-none">${formatNumber(rD)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p></div>
             <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg"><p class="text-[13px] font-bold text-[#d1d1d6] mb-1">上 切込</p><p class="text-[38px] font-bold text-[#5e5ce6] leading-none">${formatNumber(rU)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p></div>
-            <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg"><p class="text-[13px] font-bold text-[#d1d1d6] mb-1">上寸法</p><p class="text-[38px] font-bold text-[#30d158] leading-none">${formatNumber(rT)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p></div>`;
-        updateHeightSVG(t, l1, l2, rU, rT);
+            <div class="bg-[#1c1c1e] rounded-2xl py-2 border border-[#2c2c2e] text-center shadow-lg"><p class="text-[13px] font-bold text-[#d1d1d6] mb-1">上寸法</p><p class="text-[38px] font-bold text-[#30d158] leading-none">${formatNumber(Math.round(rT*10)/10)}<span class="text-sm ml-1 text-[#d1d1d6]">mm</span></p></div>`;
+        updateHeightSVG(t, l1, l2, rU, Math.round(rT*10)/10);
         resArea.classList.remove('hidden');
     };
 
     function updateSideSVG(l1, l2, a, zVal, yVal) {
         const displayWidth = Math.max(6 * a, l2 / 0.65, l2 + 3.2 * a);
         const scale = 340 / displayWidth, centerWorld = l1 + (l2 / 2);
-        
         const startJointIndex = Math.floor((centerWorld - displayWidth / 2) / a) - 1;
         const endJointIndex = Math.ceil((centerWorld + displayWidth / 2) / a) + 1;
         
@@ -491,7 +378,6 @@
         }
         const winW = l2 * scale, winLE = 200 + (l1 - centerWorld) * scale, winRE = winLE + winW;
         const jZ = [...joints].reverse().find(j => j <= winLE + 1.5), jY = joints.find(j => j >= winRE - 1.5);
-        
         const dirX = calcDirection === 'LtoR' ? 385 : 15, dirAnchor = calcDirection === 'LtoR' ? 'end' : 'start';
         
         document.getElementById('svgContainer').innerHTML = `<svg viewBox="0 0 400 200" class="w-full h-full"><rect x="5" y="5" width="390" height="190" fill="none" stroke="#d1d1d6" stroke-width="1" />${jointsHtml}<rect x="${winLE}" y="50" width="${winW}" height="80" fill="#3a3a3c" stroke="#ffffff" stroke-width="3" /><text x="${winLE + winW/2}" y="95" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="black">開口部</text><line x1="${winLE}" y1="155" x2="${jZ ? jZ : 0}" y2="155" stroke="#0a84ff" stroke-width="3" /><text x="${(winLE + (jZ ? jZ : 0))/2}" y="185" text-anchor="middle" font-size="${zVal > 999 ? 22 : 28}" fill="#0a84ff" font-weight="black">${formatNumber(zVal)}</text><line x1="${winRE}" y1="155" x2="${jY ? jY : 400}" y2="155" stroke="#30d158" stroke-width="3" /><text x="${(winRE + (jY ? jY : 400))/2}" y="185" text-anchor="middle" font-size="${yVal > 999 ? 22 : 28}" fill="#30d158" font-weight="black">${formatNumber(yVal)}</text><text x="${dirX}" y="30" text-anchor="${dirAnchor}" font-size="11" fill="#ff9f0a" font-weight="bold">${calcDirection === 'LtoR' ? '← 張出方向' : '張出方向 →'}</text><text x="${dirX}" y="95" text-anchor="${dirAnchor}" font-size="16" fill="#ffffff" font-weight="black">W:${formatNumber(l1)}</text></svg>`;
@@ -509,16 +395,43 @@
             const res = item.mode === '横' ? 
                 `<div class="flex justify-around pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">左側切込</p><p class="text-[24px] font-bold text-[#0a84ff] leading-none">${formatNumber(item.outputs.z)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">右側切込</p><p class="text-[24px] font-bold text-[#30d158] leading-none">${formatNumber(item.outputs.y)}</p></div></div>` : 
                 `<div class="grid grid-cols-3 pt-3 border-t border-[#2c2c2e]"><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">下切</p><p class="text-[20px] font-bold text-white">${formatNumber(item.outputs.down)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上切</p><p class="text-[20px] font-bold text-[#5e5ce6]">${formatNumber(item.outputs.up)}</p></div><div class="text-center"><p class="text-[10px] font-bold text-[#d1d1d6]">上寸</p><p class="text-[20px] font-bold text-[#30d158]">${formatNumber(item.outputs.top)}</p></div></div>`;
+            
             if (isChecked) {
-                return `<div class="history-item py-2 px-4 rounded-2xl border border-[#2c2c2e] checked shadow-lg mb-2" style="border-color: ${themeColor}" onclick="applyHistoryItem('${item.id}')"><div class="flex justify-between items-center mb-1"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', true)" style="color: ${themeColor}"><svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg></button><span class="bg-white text-black text-[11px] font-black px-2 py-0.5 rounded-full shadow-md transition-all">No.${item.no}</span><span class="text-[15px] font-bold text-white ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span style="color: ${themeColor}" class="text-[11px] font-bold transition-all">${item.mode}${item.calcDir ? (item.calcDir==='LtoR'?'(左←)':'(左→)') : ''}</span></div>${res}</div>`;
+                return `<div class="history-item py-2 px-4 rounded-2xl border border-[#2c2c2e] checked shadow-lg mb-2" style="border-color: ${themeColor}" onclick="applyHistoryItem('${item.id}')"><div class="flex justify-between items-center mb-1"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', true)" style="color: ${themeColor}"><svg class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\"/></svg></button><span class="bg-white text-black text-[11px] font-black px-2 py-0.5 rounded-full shadow-md transition-all">No.${item.no}</span><span class="text-[15px] font-bold text-white ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span style="color: ${themeColor}" class="text-[11px] font-bold transition-all">${item.mode}${item.calcDir ? (item.calcDir==='LtoR'?'(左←)':'(左→)') : ''}</span></div>${res}</div>`;
             } else {
                 const results = item.mode === '横' ? `<div class="flex gap-x-6"><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">左</span><span class="text-[19px] font-black text-[#0a84ff]">${formatNumber(item.outputs.z)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">右</span><span class="text-[19px] font-black text-[#30d158]">${formatNumber(item.outputs.y)}</span></div></div>` : `<div class="flex gap-x-4"><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">下</span><span class="text-[17px] font-black text-white">${formatNumber(item.outputs.down)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">上</span><span class="text-[17px] font-black text-[#5e5ce6]">${formatNumber(item.outputs.up)}</span></div><div class="flex items-baseline"><span class="text-[#d1d1d6] text-[12px] mr-1.5">寸</span><span class="text-[17px] font-black text-[#30d158]">${formatNumber(item.outputs.top)}</span></div></div>`;
-                return `<div class="history-item px-3 py-3 rounded-xl border border-[#2c2c2e] flex flex-col gap-2 mb-2" onclick="applyHistoryItem('${item.id}')"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', false)" class="text-white bg-[#444] rounded-full p-0.5 active:scale-125 transition-transform mr-1"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg></button><span class="text-[#d1d1d6] font-bold text-[14px] transition-all">No.${item.no}</span><span class="text-white font-bold text-[15px] ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span class="text-[#d1d1d6] font-bold text-[11px] uppercase transition-all">${item.mode}切込</span></div><div class="flex justify-center bg-[#000] py-2 rounded-lg border border-[#2c2c2e] shadow-inner">${results}</div></div>`;
+                return `<div class="history-item px-3 py-3 rounded-xl border border-[#2c2c2e] flex flex-col gap-2 mb-2" onclick="applyHistoryItem('${item.id}')"><div class="flex items-center justify-between"><div class="flex items-center gap-2"><button type="button" onclick="event.stopPropagation(); toggleCheck('${item.id}', false)" class="text-white bg-[#444] rounded-full p-0.5 active:scale-125 transition-transform mr-1"><svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\"/></svg></button><span class="text-[#d1d1d6] font-bold text-[14px] transition-all">No.${item.no}</span><span class="text-white font-bold text-[15px] ml-1">${item.mode==='横'?'寸法':'下寸'}: ${formatNumber(item.inputs.l1)}</span></div><span class="text-[#d1d1d6] font-bold text-[11px] uppercase transition-all">${item.mode}切込</span></div><div class="flex justify-center bg-[#000] py-2 rounded-lg border border-[#2c2c2e] shadow-inner">${results}</div></div>`;
             }
         };
         sideList.innerHTML = window.historyData.filter(d => d.mode === '横').map(render).join('') || '<p class="text-center text-[#d1d1d6] opacity-20 py-4 text-xs italic">データなし</p>';
         heightList.innerHTML = window.historyData.filter(d => d.mode === '縦').map(render).join('') || '<p class="text-center text-[#d1d1d6] opacity-20 py-4 text-xs italic">データなし</p>';
     };
+
+    window.openConfirm = (action, mode = '') => {
+        const modal = document.getElementById('customConfirmModal');
+        const msg = document.getElementById('confirmMessage');
+        window.pendingAction = { action, mode };
+        msg.innerText = action === 'category' ? `${mode}切込の履歴を削除しますか？` : "全ての履歴を一括削除しますか？";
+        modal.classList.remove('hidden');
+    };
+
+    window.executeConfirm = function() {
+        if (!window.pendingAction) return;
+        const { action, mode } = window.pendingAction;
+        
+        window.historyData = window.historyData.filter(d => {
+            if (d.checked) return true; // チェック済みは残す
+            if (action === 'all') return false;
+            if (action === 'category' && d.mode === mode) return false;
+            return true;
+        });
+
+        document.getElementById('customConfirmModal').classList.add('hidden');
+        saveLocalHistory();
+        renderHistory();
+    };
+
+    window.onload = loadLocalHistory;
 </script>
 
 </body>
