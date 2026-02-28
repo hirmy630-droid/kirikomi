@@ -188,8 +188,8 @@
                 </div>
                 <!-- ズーム機能を追加した図面エリア -->
                 <div class="bg-[#111] rounded-2xl border border-[#333] shadow-xl overflow-hidden p-1 relative cursor-pointer" onclick="openZoomModal('svgContainer')">
-                    <!-- 拡大バッジ -->
-                    <div class="absolute top-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1 backdrop-blur-sm border border-white/20 z-10">
+                    <!-- 拡大バッジ (非表示) -->
+                    <div class="hidden absolute top-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1 backdrop-blur-sm border border-white/20 z-10">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" /></svg>
                         拡大
                     </div>
@@ -206,8 +206,8 @@
                     <div id="historyPreviewContainer" class="mb-4 hidden px-3">
                         <!-- ズーム機能を追加した履歴図面エリア -->
                         <div class="bg-[#111] rounded-2xl border border-[#333] shadow-xl overflow-hidden p-1 mb-1 relative cursor-pointer" onclick="openZoomModal('historyPreviewSvg')">
-                            <!-- 拡大バッジ -->
-                            <div class="absolute top-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1 backdrop-blur-sm border border-white/20 z-10">
+                            <!-- 拡大バッジ (非表示) -->
+                            <div class="hidden absolute top-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1 backdrop-blur-sm border border-white/20 z-10">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" /></svg>
                                 拡大
                             </div>
@@ -260,22 +260,28 @@
         </div>
     </div>
 
-    <!-- 拡大表示用モーダル (新規追加) -->
-    <div id="zoomModal" class="hidden fixed inset-0 z-[10000] flex items-center justify-center bg-black/95 backdrop-blur-md transition-opacity" onclick="closeZoomModal()">
-        <!-- 閉じるボタン -->
-        <button type="button" class="absolute top-6 right-6 text-white bg-white/20 hover:bg-white/30 rounded-full p-2 backdrop-blur-md transition-colors z-[10010]" onclick="closeZoomModal()">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-        <!-- 拡大画像コンテナ -->
-        <div class="w-full max-w-4xl p-2 md:p-6 flex flex-col items-center justify-center h-full" onclick="event.stopPropagation()">
-            <!-- SVGのコピー先 -->
-            <div id="zoomSvgContainer" class="w-full bg-[#000] rounded-2xl border border-white/20 shadow-2xl overflow-hidden cursor-pointer" onclick="closeZoomModal()">
-                <!-- SVGがここに挿入される -->
-            </div>
+    <!-- 拡大・ピンチ・回転対応ズームモーダル -->
+    <div id="zoomModal" class="hidden fixed inset-0 z-[10000] flex flex-col bg-black/95 backdrop-blur-md transition-opacity">
+        <!-- ヘッダー部分 -->
+        <div class="absolute top-0 left-0 right-0 p-4 md:p-6 flex justify-between items-center z-[10010] bg-gradient-to-b from-black/80 to-transparent">
             <!-- ヒントテキスト -->
-            <div class="mt-6 text-white/50 text-sm font-medium tracking-widest bg-white/10 px-4 py-1.5 rounded-full pointer-events-none">
-                画面をタップして閉じる
+            <div class="text-white/60 text-[11px] font-bold tracking-widest bg-white/10 px-3 py-1.5 rounded-full pointer-events-none backdrop-blur-sm border border-white/10">
+                ピンチ＆スワイプで操作
             </div>
+            <div class="flex gap-3">
+                <!-- 回転ボタン -->
+                <button type="button" class="text-white bg-white/20 hover:bg-white/30 rounded-full p-2.5 backdrop-blur-md transition-colors" onclick="toggleZoomRotation()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                </button>
+                <!-- 閉じるボタン -->
+                <button type="button" class="text-white bg-white/20 hover:bg-white/30 rounded-full p-2.5 backdrop-blur-md transition-colors" onclick="closeZoomModal()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+        </div>
+        <!-- 拡大画像コンテナ (touch-noneでスクロールを防止) -->
+        <div id="zoomArea" class="flex-1 w-full h-full flex items-center justify-center overflow-hidden touch-none relative">
+            <img id="zoomImg" class="max-w-full max-h-[80vh] object-contain transition-transform duration-75 ease-out rounded-xl border border-white/10 shadow-2xl" alt="拡大図面" style="transform-origin: center;">
         </div>
     </div>
 
@@ -439,7 +445,6 @@
             persist();
         }
 
-        // 重要: IDの生成を保存時に行うように修正
         function saveToHistory() {
             if (!currentResult) return;
             const newItem = { 
@@ -554,16 +559,27 @@
             if (t) { t.innerText = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1000); }
         }
 
-        // ---------- ズーム機能 (追加) ----------
+        // ---------- ズーム・回転・ピンチ機能 ----------
+        let zoomState = { scale: 1, x: 0, y: 0, rotation: 0 };
+        let pinchState = { isDragging: false, startX: 0, startY: 0, initialDist: 0, initialScale: 1 };
+
         function openZoomModal(sourceId) {
             const sourceEl = document.getElementById(sourceId);
-            if (!sourceEl || !sourceEl.innerHTML) return;
+            if (!sourceEl) return;
+            const svgEl = sourceEl.querySelector('svg');
+            if (!svgEl) return;
+
+            // SVGを文字列化して画像URI(Base64不要のutf-8方式)に変換
+            const svgData = new XMLSerializer().serializeToString(svgEl);
+            const svgUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgData);
+
+            const zoomImg = document.getElementById('zoomImg');
+            zoomImg.src = svgUrl;
             
-            // 対象のSVGコンテンツをコピー
-            const zoomContainer = document.getElementById('zoomSvgContainer');
-            zoomContainer.innerHTML = sourceEl.innerHTML;
-            
-            // モーダルを表示
+            // 状態を初期化
+            zoomState = { scale: 1, x: 0, y: 0, rotation: 0 };
+            updateZoomTransform();
+
             const modal = document.getElementById('zoomModal');
             modal.classList.remove('hidden');
         }
@@ -571,15 +587,91 @@
         function closeZoomModal() {
             const modal = document.getElementById('zoomModal');
             modal.classList.add('hidden');
-            
-            // メモリ解放のため中身をクリア
-            document.getElementById('zoomSvgContainer').innerHTML = '';
+            const zoomImg = document.getElementById('zoomImg');
+            zoomImg.src = '';
         }
-        // ------------------------------------
 
+        function toggleZoomRotation() {
+            const zoomImg = document.getElementById('zoomImg');
+            zoomState.rotation = zoomState.rotation === 0 ? 90 : 0;
+            // 回転時にスケールと位置をリセットする
+            zoomState.scale = 1;
+            zoomState.x = 0;
+            zoomState.y = 0;
+            
+            // スムーズなアニメーションを追加
+            zoomImg.style.transition = 'transform 0.3s ease-in-out';
+            updateZoomTransform();
+            
+            // アニメーションが終わったらtransitionを外す（ピンチ時の遅延を防ぐため）
+            setTimeout(() => { zoomImg.style.transition = 'none'; }, 300);
+        }
+
+        function updateZoomTransform() {
+            const zoomImg = document.getElementById('zoomImg');
+            zoomImg.style.transform = `translate(${zoomState.x}px, ${zoomState.y}px) scale(${zoomState.scale}) rotate(${zoomState.rotation}deg)`;
+        }
+
+        // DOMContentLoaded後にズームエリアのタッチイベントを登録
+        window.addEventListener('DOMContentLoaded', () => {
+            const zoomArea = document.getElementById('zoomArea');
+            if (!zoomArea) return;
+
+            zoomArea.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    pinchState.isDragging = true;
+                    pinchState.startX = e.touches[0].clientX - zoomState.x;
+                    pinchState.startY = e.touches[0].clientY - zoomState.y;
+                } else if (e.touches.length === 2) {
+                    pinchState.isDragging = false;
+                    pinchState.initialDist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    pinchState.initialScale = zoomState.scale;
+                }
+            }, { passive: false });
+
+            zoomArea.addEventListener('touchmove', (e) => {
+                e.preventDefault(); // デフォルトのスクロール動作を防止
+                if (e.touches.length === 1 && pinchState.isDragging) {
+                    zoomState.x = e.touches[0].clientX - pinchState.startX;
+                    zoomState.y = e.touches[0].clientY - pinchState.startY;
+                    updateZoomTransform();
+                } else if (e.touches.length === 2) {
+                    const dist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    const scale = pinchState.initialScale * (dist / pinchState.initialDist);
+                    // 0.5倍から5倍の間に制限
+                    zoomState.scale = Math.max(0.5, Math.min(scale, 5));
+                    updateZoomTransform();
+                }
+            }, { passive: false });
+
+            zoomArea.addEventListener('touchend', (e) => {
+                if (e.touches.length < 2) {
+                    pinchState.initialDist = 0;
+                }
+                if (e.touches.length === 0) {
+                    pinchState.isDragging = false;
+                } else if (e.touches.length === 1) {
+                    // 指が1本離れたら再びドラッグ状態の準備
+                    pinchState.isDragging = true;
+                    pinchState.startX = e.touches[0].clientX - zoomState.x;
+                    pinchState.startY = e.touches[0].clientY - zoomState.y;
+                }
+            });
+        });
+
+        // 左右スワイプでのタブ切り替え
         let touchStartXPoint = 0;
         document.addEventListener('touchstart', e => { touchStartXPoint = e.changedTouches[0].screenX; }, { passive: true });
         document.addEventListener('touchend', e => {
+            // モーダルが開いている時はタブ切り替えを無効化
+            if (!document.getElementById('zoomModal').classList.contains('hidden')) return;
+            
             if (e.target.closest('.keypad-container')) return;
             const diff = e.changedTouches[0].screenX - touchStartXPoint;
             if (Math.abs(diff) > 80) {
